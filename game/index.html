@@ -166,6 +166,7 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 </div>
 
 <div id="game" class="wrap" style="display:none">
+  <div id="guideBox" class="panel" style="display:none;border-color:var(--bronze)"></div>
   <div id="topbar">
     <div class="who" id="who"></div>
     <div>
@@ -195,6 +196,10 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   <div class="panel">
     <div class="panel-title"><span>天 下 闻</span><small>列国动向 · 战事 · 近期大事</small></div>
     <div id="newsBox"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>功 绩 簿</span><small>你的贡献归因 · 本国功臣榜</small></div>
+    <div id="meritBox"></div>
   </div>
   <div class="panel">
     <div class="panel-title"><span>客 卿</span><small>接入你自带的 AI（密钥只存本机浏览器，绝不上传）</small></div>
@@ -300,10 +305,6 @@ function guestToken(){
   if(!t){ t = 'g_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('lgc_token',t); }
   return t;
 }
-async function loadPlayer(){
-  const rows = await dbRead('players', q=>q.eq('token', guestToken()).limit(1));
-  return rows[0]||null;
-}
 async function loadNation(key){
   const rows = await dbRead('nations', q=>q.eq('nation_key', key).limit(1));
   return rows[0]||null;
@@ -311,9 +312,6 @@ async function loadNation(key){
 async function loadDecree(nationKey, xun){
   const rows = await dbRead('decrees', q=>q.eq('nation_key',nationKey).eq('xun',xun).order('created_at',{ascending:false}).limit(1));
   return rows[0]||null;
-}
-async function loadMyActions(xun){
-  return await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',xun).order('created_at',{ascending:true}));
 }
 
 /* ============ AI 君主 ============ */
@@ -511,12 +509,6 @@ async function maybeStartWar(){
       }
     }
   }
-}
-async function captureNode(nat, node){
-  // 节点陷落：攻方小赚，守方失血
-  const clamp = v => Math.max(5,Math.min(100,v));
-  const updQ = {military:clamp((nat.military||0)+4), economy:clamp((nat.economy||0)+2)};
-  return updQ;
 }
 async function settleWar(result){
   const q = await loadNation('qin'); const c = await loadNation('chu');
@@ -998,6 +990,50 @@ function renderWho(){
     <span class="rank-pill">${r.n}</span>${window._regentId===player.id?'<span class="rank-pill" style="border-color:var(--seal);color:#d49a8a">摄政</span>':''}
     <small style="margin-left:8px">声望 ${player.prestige}${nx?`（${nx.n} 还差 ${nx.v-player.prestige}）`:'（已至顶峰）'}</small>`;
 }
+async function renderMerit(){
+  if(spectate){ $('meritBox').innerHTML='<div class="hint">观政模式不记录功绩。</div>'; return; }
+  try{
+    const rows = await dbRead('player_actions', q=>q.eq('token',player.token).order('created_at',{ascending:false}).limit(200));
+    const byDim={}, byType={};
+    let done=0, fail=0;
+    for(const r of rows){
+      if(r.action_type==='task'){ if(/·成/.test(r.note||'')) done++; else if(/·失/.test(r.note||'')) fail++; }
+      byType[r.action_type]=(byType[r.action_type]||0)+1;
+      if(r.dim && r.amount) byDim[r.dim]=(byDim[r.dim]||0)+r.amount;
+    }
+    const maxD=Math.max(1,...DIMS.map(d=>byDim[d.k]||0));
+    const dimHtml = DIMS.map(d=>{
+      const v=byDim[d.k]||0;
+      return '<div style="display:flex;align-items:center;gap:8px;margin:3px 0">'+
+        '<span style="width:34px;font-size:12px;color:var(--ink-dim)">'+d.n+'</span>'+
+        '<div class="bar" style="flex:1"><div class="fill" style="width:'+Math.round(v/maxD*100)+'%"></div></div>'+
+        '<span style="width:36px;font-size:12px;color:var(--bronze-l)">'+v+'</span></div>';
+    }).join('');
+    let board='';
+    try{
+      const nat = await dbRead('player_actions', q=>q.eq('nation_key',player.nation_key).order('created_at',{ascending:false}).limit(300));
+      const agg={};
+      for(const r of nat){ if(!r.token || r.token==='spectator') continue; agg[r.token]=(agg[r.token]||0)+(r.amount||0); }
+      const ps = await dbRead('players', q=>q.eq('nation_key',player.nation_key).limit(200));
+      const nameOf={}; for(const p of ps) nameOf[p.token]=p.name;
+      const top=Object.entries(agg).sort((a,b)=>b[1]-a[1]).slice(0,5);
+      board = '<div style="margin-top:8px;border-top:1px dashed #2c2418;padding-top:6px"><div style="font-size:12px;color:var(--ink-dim);letter-spacing:.2em;margin-bottom:4px">本 国 功 臣 榜</div>'+
+        (top.length? top.map(([t,v],i)=>'<div class="logline">'+(i+1)+'. '+esc(nameOf[t]||'无名之士')+(t===player.token?'（你）':'')+' —— 累计贡献 '+v+'</div>').join('') : '<div class="logline">尚无记录。</div>') + '</div>';
+    }catch(e){}
+    $('meritBox').innerHTML = '<div style="font-size:12px;color:var(--ink-dim);letter-spacing:.2em;margin-bottom:4px">你 的 五 维 贡 献（累计）</div>'+dimHtml+
+      '<div class="hint" style="margin-top:6px">办差：成 '+done+' / 蹉跎 '+fail+' · 方略 '+(byType['fanglue']||0)+' 次 · 上书 '+(byType['memorial']||0)+' 道 · 斡旋 '+(byType['mediate']||0)+' 次</div>'+board;
+  }catch(e){}
+}
+function renderGuide(){
+  if(localStorage.getItem('lgc_guide_seen') || spectate){ $('guideBox').style.display='none'; return; }
+  $('guideBox').style.display='block';
+  $('guideBox').innerHTML = '<div class="panel-title"><span>初 入 朝 堂 · 三 步 上 手</span><button class="minor" id="btnGuideOk">知道了</button></div>'+
+    '<div style="font-size:14px;line-height:2">'+
+    '① <b style="color:var(--bronze-l)">接诏办差</b>：君上每旬颁《国策诏》，在"任事"里挑差事去办——尽心办收益高但有风险，循例办稳成但收益减半；<br>'+
+    '② <b style="color:var(--bronze-l)">上书议政</b>：在"上书"面板择倾向呈奏，君上下旬定策会参考；大夫后可亲笔议政案；<br>'+
+    '③ <b style="color:var(--bronze-l)">进旬晋升</b>：办完差点"进入下一旬"，声望够了就升官——下士双格上书、上大夫领双差、大夫以上能斡旋。</div>';
+  $('btnGuideOk').onclick = ()=>{ localStorage.setItem('lgc_guide_seen','1'); $('guideBox').style.display='none'; };
+}
 async function renderFang(){
   const f = parseFang(nation);
   const lineDef = FANG.find(x=>x.k===f.line)||FANG[0];
@@ -1062,7 +1098,7 @@ async function renderNews(){
   $('newsBox').innerHTML = warHtml + dipHtml + histHtml + newsHtml;
   const bm = $('btnMediate'); if(bm) bm.onclick = mediate;
 }
-function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderKeqing(); renderLog().catch(()=>{}); renderNews().catch(()=>{}); renderFang().catch(()=>{}); }
+function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderKeqing(); renderLog().catch(()=>{}); renderNews().catch(()=>{}); renderFang().catch(()=>{}); renderMerit().catch(()=>{}); }
 
 /* ============ 开局 ============ */
 let selNation = null;
@@ -1104,6 +1140,7 @@ async function enterWorld(){
     await loadWarState();
     await ensureDecree();
     renderAll();
+    renderGuide();
   }catch(e){ toast('加载失败：'+(e.message||'未知错误')); }
   hideLoading();
 }
@@ -1140,7 +1177,7 @@ async function enterLoggedIn(uid){
       if(player.stratum!==want){ await cloud.database.from('players').update({stratum:want}).eq('id',player.id); player.stratum=want; }
       document.body.classList.remove('setup-bg');
       $('auth').style.display='none'; $('setup').style.display='none'; $('game').style.display='block';
-      $('btnLogout').style.display='inline-block';
+      $('btnLogout').style.display='inline-block'; $('btnLogout').textContent='登出';
       await enterWorld();
     }else{
       document.body.classList.remove('setup-bg');
@@ -1218,7 +1255,7 @@ async function doLogout(){
   $('btnStart').onclick = startGame;
   $('btnNext').onclick = nextXun;
   $('btnReset').onclick = resetGame;
-  $('btnLogout').onclick = doLogout;
+  $('btnLogout').onclick = ()=>{ if(spectate){ location.reload(); } else { doLogout(); } };
   $('btnSms').onclick = sendSms;
   $('btnPhoneLogin').onclick = phoneLogin;
   $('btnWbLogin').onclick = wbLogin;
@@ -1230,6 +1267,7 @@ async function startSpectate(){
     player = {token:'spectator', name:'观政者', nation_key:'qin', prestige:0};
     document.body.classList.remove('setup-bg');
     $('auth').style.display='none'; $('game').style.display='block';
+    $('btnLogout').style.display='inline-block'; $('btnLogout').textContent='退出观政';
     nation = await loadNation('qin');
     await loadWarState();
     renderAll();
