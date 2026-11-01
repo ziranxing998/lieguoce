@@ -280,7 +280,7 @@ let busy = false;
 let warState = null;    // {active, progress, warXun}（以秦行为账本）
 
 const $ = id => document.getElementById(id);
-const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s??'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2600); }
 function showLoading(text){ $('loadingText').textContent = text||'朝 堂 肃 静'; $('loading').style.display='flex'; }
 function hideLoading(){ $('loading').style.display='none'; }
@@ -326,10 +326,10 @@ async function listModel(){
 }
 let modelId = undefined; // 惰性获取
 async function llmDecree(nat, actions, memos, yian, extraCtx){
-  if(!llmReady) return null;
+  if(!llmReady){ if(Date.now()<(window._llmRetryAt||0)) return null; llmReady=true; }
   try{
     if(modelId===undefined) modelId = await listModel();
-    if(!modelId){ llmReady=false; return null; }
+    if(!modelId){ llmReady=false; window._llmRetryAt = Date.now()+90000; return null; }
     const meta = NATION_META[nat.nation_key];
     const snapshot = {}; for(const d of DIMS) snapshot[d.n]=nat[d.k];
     const actSummary = actions.length? actions.map(a=>`${a.note}（${(DIMS.find(d=>d.k===a.dim)||{}).n||'—'}+${a.amount||0}）`).join('；') : '本旬尚无臣下报事';
@@ -356,7 +356,7 @@ async function llmDecree(nat, actions, memos, yian, extraCtx){
     }));
     const ev = obj.event&&dimSet.has(obj.event.dim) ? {title:String(obj.event.title||'时局').slice(0,8), desc:String(obj.event.desc||'').slice(0,50), dim:obj.event.dim, amount:Math.max(-6,Math.min(6,Number(obj.event.amount)||0))} : null;
     return {content:String(obj.decree).slice(0,300), quote:String(obj.quote||'').slice(0,80), focus:dimSet.has(obj.focus)?obj.focus:null, tasks, event:ev};
-  }catch(e){ console.warn('LLM fail', e&&e.error?e.error.code:e); return null; }
+  }catch(e){ console.warn('LLM fail', e&&e.error?e.error.code:e); llmReady=false; window._llmRetryAt = Date.now()+90000; return null; }
 }
 // 模板诏书（AI 不可用时的兜底）
 function templateDecreeFull(nat, memos){
@@ -403,11 +403,23 @@ function templateDecreeFull(nat, memos){
   };
 }
 
+function normalizeTaskList(arr){
+  const dimSet = new Set(DIMS.map(d=>d.k));
+  return (Array.isArray(arr)?arr:[]).slice(0,3).map(t=>({
+    title:String(t.title||'差事').slice(0,12),
+    desc:String(t.desc||'').slice(0,60),
+    type: t.type==='武'?'武':'文',
+    dim: dimSet.has(t.dim)?t.dim:'economy',
+    reward: Math.max(3,Math.min(15,Number(t.reward)||8)),
+    war_side: t.war_side==='attack'||t.war_side==='defend'?t.war_side:null,
+  }));
+}
 async function ensureDecree(){
+  tasks = []; // S5：清残留，防跨旬脏任务
   let d = await loadDecree(player.nation_key, nation.xun);
   if(d){
     decree = d;
-    try{ const j = JSON.parse(d.content); if(j.tasks){ tasks=j.tasks; decree.text=j.decree||j.content; } }
+    try{ const j = JSON.parse(d.content); if(j.tasks){ tasks=normalizeTaskList(j.tasks); decree.text=j.decree||j.content; } }
     catch(e){ decree.text=d.content; }
     if(!tasks){ // 老格式或模板兜底
       const t = templateDecreeFull(nation, null);
@@ -439,17 +451,24 @@ async function ensureDecree(){
   const { data, error } = await cloud.database.from('decrees').insert({
     nation_key:player.nation_key, xun:nation.xun, content:payload, quote:gen.quote, focus_dim:gen.focus, source,
   }).select();
-  if(error){ toast('诏书生成失败：'+error.message); return; }
+  if(error){
+    if(error.code==='23505'){ // 双人竞态：对方已生成，直接复用
+      const ex = await loadDecree(player.nation_key, nation.xun);
+      if(ex){ decree = ex; try{ const j=JSON.parse(ex.content); if(j.tasks){ tasks=normalizeTaskList(j.tasks); decree.text=j.decree||j.content; } }catch(e){ decree.text=ex.content; } return; }
+    }
+    toast('诏书生成失败：'+error.message); return;
+  }
   decree = data[0]; decree.text = gen.content; tasks = gen.tasks;
   // 本旬事件结算（只有生成者执行一次，世界共享）
   if(gen.event){
     const amt = gen.event.amount||0;
-    const newV = Math.max(5,Math.min(100,(nation[gen.event.dim]||0)+amt));
+    const { data:dimRes } = await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:gen.event.dim, p_delta:amt });
+    const newV = dimRes ? dimRes[gen.event.dim] : Math.max(5,Math.min(100,(nation[gen.event.dim]||0)+amt));
     const { data:eu } = await cloud.database.from('nations').update({
-      [gen.event.dim]:newV, last_event:JSON.stringify({xun:nation.xun, title:gen.event.title, desc:gen.event.desc, amount:amt, dim:gen.event.dim}),
+      last_event:JSON.stringify({xun:nation.xun, title:gen.event.title, desc:gen.event.desc, amount:amt, dim:gen.event.dim}),
       updated_at:new Date().toISOString(),
     }).eq('id',nation.id).select();
-    if(eu&&eu[0]) nation = eu[0];
+    if(eu&&eu[0]) nation = {...eu[0], [gen.event.dim]:newV};
   }
 }
 
@@ -475,15 +494,15 @@ async function loadWarState(){
   if(q && q.war_active){
     warState = {active:true, progress:q.war_progress, warXun:q.war_xun, node:q.war_node||0};
     // 超 3 旬强制结算：按已陷节点数定胜负
-    if(nation.xun - q.war_xun >= 3) await settleWar((q.war_node||0)>=2?'qin_win':((q.war_node||0)>=1?'qin_partial':'stale'));
+    if(q.xun - q.war_xun >= 3) await settleWar((q.war_node||0)>=2?'qin_win':((q.war_node||0)>=1?'qin_partial':'stale')); // S3：以秦行时钟为准
   }else warState = {active:false, progress:50, warXun:0, node:0};
 }
 async function maybeStartWar(){
   if(nation.xun>1 && nation.xun%3===1 && !(warState&&warState.active)){
     const q = await loadNation('qin');
     if(q && !q.war_active){
-      const { data } = await cloud.database.from('nations').update({war_active:true, war_progress:0, war_xun:nation.xun, war_node:0, updated_at:new Date().toISOString()}).eq('id',q.id).select();
-      if(data&&data[0]) warState = {active:true, progress:0, warXun:nation.xun, node:0};
+      const { data } = await cloud.database.from('nations').update({war_active:true, war_progress:0, war_xun:q.xun, war_node:0, updated_at:new Date().toISOString()}).eq('id',q.id).select();
+      if(data&&data[0]) warState = {active:true, progress:0, warXun:q.xun, node:0};
       const d = await loadDiplo(); d['qin-chu']=-60; await saveDiplo(d);
       // 开战事件写入双方 last_event
       for(const key of ['qin','chu']){
@@ -531,32 +550,43 @@ async function pushFanglue(){
     // 每旬每人一次
     const acted = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','fanglue'));
     if(acted.length>=1){ busy=false; hideLoading(); toast('本旬已推动过方略，且待下旬'); return; }
-    const f = parseFang(nation);
+    let f = parseFang(nation);
     const lineDef = FANG.find(x=>x.k===f.line)||FANG[0];
     const roll = Math.random();
     const ok = roll < 0.7;
     let msg;
     if(ok){
-      f.lv += 1;
-      const clamp = v => Math.max(5,Math.min(100,v));
-      const upd = {[lineDef.dim]: clamp((nation[lineDef.dim]||0)+2)};
-      let doneMsg = '';
-      if(f.lv>=FANG_CELLS){
-        // 成线：额外 +5，并切换到下一条未成线
-        upd[lineDef.dim] = clamp((upd[lineDef.dim]||0)+5);
-        f.done = [...(f.done||[]), f.line];
-        const next = FANG.find(x=>!f.done.includes(x.k)) || FANG[0];
-        f.line = next.k; f.lv = 0;
-        doneMsg = `【${lineDef.n}】方略功成！全国转向【${next.n}】。`;
-      }else{
-        doneMsg = `【${lineDef.n}】推进至第${f.lv}格。${lineDef.cell}`;
+      // S4：乐观锁重试（读最新→算新值→带旧值条件写回）
+      let casOk = false, doneMsg = '';
+      for(let attempt=0; attempt<3 && !casOk; attempt++){
+        const fresh = await loadNation(player.nation_key);
+        f = parseFang(fresh);
+        const ld = FANG.find(x=>x.k===f.line)||FANG[0];
+        const oldRaw = fresh.fanglue;
+        f.lv += 1;
+        const clamp = v => Math.max(5,Math.min(100,v));
+        let bump = 2;
+        if(f.lv>=FANG_CELLS){
+          bump = 7; // 2 + 功成 5
+          f.done = [...(f.done||[]), f.line];
+          const next = FANG.find(x=>!f.done.includes(x.k)) || FANG[0];
+          f.line = next.k; f.lv = 0;
+          doneMsg = `【${ld.n}】方略功成！全国转向【${next.n}】。`;
+        }else{
+          doneMsg = `【${ld.n}】推进至第${f.lv}格。${ld.cell}`;
+        }
+        let q = cloud.database.from('nations')
+          .update({ fanglue: JSON.stringify(f), updated_at:new Date().toISOString() })
+          .eq('id', nation.id);
+        if(oldRaw === null || oldRaw === undefined){ q = q.is('fanglue', null); } else { q = q.eq('fanglue', oldRaw); }
+        const { data:cas, error:casErr } = await q.select();
+        if(!casErr && cas && cas.length){ casOk = true; }
       }
-      upd.fanglue = JSON.stringify(f);
-      upd.updated_at = new Date().toISOString();
-      const { data:nu } = await cloud.database.from('nations').update(upd).eq('id',nation.id).select();
-      if(nu&&nu[0]) nation = nu[0];
-      const { data:pu } = await cloud.database.from('players').update({prestige:(player.prestige||0)+3}).eq('id',player.id).select();
-      if(pu&&pu[0]) player = pu[0];
+      if(!casOk){ msg = '方略朝议拥挤，稍后再推。'; renderAll(); toast(msg); return; }
+      const { data:dimRes } = await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:lineDef.dim, p_delta:2 });
+      if(dimRes) nation = {...nation, [lineDef.dim]: dimRes[lineDef.dim]};
+      const { data:pv } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta:3 });
+      if(pv!==null && pv!==undefined) player = {...player, prestige:pv};
       await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'fanglue', dim:lineDef.dim, amount:2, note:`推动方略【${lineDef.n}】·成`});
       msg = doneMsg + ' 声望+3';
     }else{
@@ -586,7 +616,7 @@ async function mediate(){
     await saveDiplo(d);
     await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'mediate', dim:'diplomacy', amount:ok?8:-2, note:`斡旋${worst.replace('-','·')}${ok?'·成':'·败'}`});
     renderAll();
-    toast(ok?`斡旋有成——${worst.replace('-','与')}关系回暖（${relName(d[worst])}）`:'斡旋受挫，两国使节不欢而散');
+    toast(ok?`斡旋有成——${worst.split('-').map(x=>(NATION_META[x]||{n:x}).n).join('与')}关系回暖（${relName(d[worst])}）`:'斡旋受挫，两国使节不欢而散');
   }catch(e){ toast('斡旋失败：'+(e.message||'未知错误')); }
   hideLoading(); busy = false;
 }
@@ -617,6 +647,8 @@ async function seasonSettle(){
   if(!history){
     history = `太史令曰：本季${SEASON_LEN}旬，${scored[0]?NATION_META[scored[0].key].n:''}国最为强盛，${scored[1]?NATION_META[scored[1].key].n:''}国次之。列国征伐不休，然百姓耕织如故。兴废有时，惟愿来季诸君勉之。`;
   }
+  try{ await cloud.database.from('decrees').delete().neq('nation_key','tianxia'); }catch(e){} // S2：清旧季诏书
+  try{ localStorage.removeItem('lgc_memo_'+player.token); localStorage.removeItem('lgc_yian_'+player.token); }catch(e){} // M4：清跨季残留
   await cloud.database.from('decrees').insert({nation_key:'tianxia', xun:1, content:JSON.stringify({history, ranking:rankTxt}), quote:history.slice(0,60), focus_dim:null, source:'history'});
   // 重置世界：国力回 40、旬回 1、战事/方略/外交清空（声望作为跨季遗产保留）
   for(const r of rows){
@@ -730,24 +762,33 @@ async function completeTask(task, choiceIdx, viaKeqing){
     let warNote = '';
     if(task.war_side && warState && warState.active){
       const delta = task.war_side==='attack' ? amt : -amt;
+      const { data:wr, error:we } = await cloud.database.rpc('bump_war', { p_delta:delta });
+      if(we) throw we;
+      if(!wr || !wr.active){ busy=false; hideLoading(); toast('战事已结束'); return; }
       const q = await loadNation('qin');
-      let np = (q.war_progress||0) + delta;
-      let node = q.war_node||0;
+      let np = wr.progress;
+      let node = wr.node||0;
+      warState.progress = np; warState.node = node;
       if(np>=100 && task.war_side==='attack'){
         // 攻陷当前节点
         const fallen = WAR_NODES[node]||'边城';
         if(node>=2){ // 王都陷落 → 秦大胜
-          await cloud.database.from('nations').update({war_progress:100, war_node:2, updated_at:new Date().toISOString()}).eq('id',q.id);
+          await cloud.database.from('nations').update({war_progress:100, war_node:2, updated_at:new Date().toISOString()}).eq('id',q.id).eq('war_progress',100);
           warState.progress=100; warState.node=2;
           const res = await settleWar('qin_win'); if(res) toast(`会战终局：${res.title}`);
           np = 100;
         }else{
           // 攻方小赚、守方失血
-          const clamp = v => Math.max(5,Math.min(100,v));
           const nextNode = node+1;
-          await cloud.database.from('nations').update({military:clamp((q.military||0)+4), economy:clamp((q.economy||0)+2), war_node:nextNode, war_progress:0, updated_at:new Date().toISOString()}).eq('id',q.id);
+          await cloud.database.rpc('bump_nation_dim', { p_nation:q.id, p_dim:'military', p_delta:4 });
+          await cloud.database.rpc('bump_nation_dim', { p_nation:q.id, p_dim:'economy', p_delta:2 });
+          await cloud.database.from('nations').update({war_node:nextNode, war_progress:0, updated_at:new Date().toISOString()}).eq('id',q.id).eq('war_progress',100);
           const c = await loadNation('chu');
-          if(c) await cloud.database.from('nations').update({economy:clamp((c.economy||0)-4), livelihood:clamp((c.livelihood||0)-2), last_event:JSON.stringify({xun:nation.xun, title:fallen+'陷落', desc:'秦军攻克'+fallen+'，楚军退守'+WAR_NODES[nextNode]+'。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',c.id);
+          if(c){
+            await cloud.database.rpc('bump_nation_dim', { p_nation:c.id, p_dim:'economy', p_delta:-4 });
+            await cloud.database.rpc('bump_nation_dim', { p_nation:c.id, p_dim:'livelihood', p_delta:-2 });
+            await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:fallen+'陷落', desc:'秦军攻克'+fallen+'，楚军退守'+WAR_NODES[nextNode]+'。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',c.id);
+          }
           np = 0;
           warState.node = nextNode;
           toast(`⚔ ${fallen}陷落！秦军兵锋直指${WAR_NODES[nextNode]}`);
@@ -760,19 +801,16 @@ async function completeTask(task, choiceIdx, viaKeqing){
         warNote = task.war_side==='attack' ? '，攻势推进' : '，守御奏效';
       }
     }
-    // 国力更新
-    const { data:upd, error:e1 } = await cloud.database.from('nations')
-      .update({ [dimKey]: Math.min(100, (nation[dimKey]||0)+amt), updated_at:new Date().toISOString() })
-      .eq('id', nation.id).select();
+    // 国力更新（S4：原子自增）
+    const { data:dimRes, error:e1 } = await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:dimKey, p_delta:amt });
     if(e1) throw e1;
-    nation = upd[0];
+    nation = {...nation, [dimKey]: dimRes[dimKey]};
     // 声望更新
     const gain = ok ? 4 : 2; // 声望与国力解耦（GDD-S12 勘误采纳）
-    const { data:pu, error:e2 } = await cloud.database.from('players')
-      .update({ prestige: (player.prestige||0)+gain }).eq('id', player.id).select();
+    const { data:pv, error:e2 } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta:gain });
     if(e2) throw e2;
     const oldRank = rankOf(player.prestige).n;
-    player = pu[0];
+    player = {...player, prestige:pv};
     const newRank = rankOf(player.prestige).n;
     // 行为记录
     await cloud.database.from('player_actions').insert({
@@ -793,11 +831,10 @@ async function nextXun(){
   if(busy) return; busy = true;
   showLoading('君 上 定 策');
   try{
-    // 旬 +1
-    const { data:nu, error:e1 } = await cloud.database.from('nations')
-      .update({ xun: nation.xun+1, updated_at:new Date().toISOString() }).eq('id', nation.id).select();
+    // 旬 +1（S4：原子自增，防双人同进跳旬）
+    const { data:nx, error:e1 } = await cloud.database.rpc('advance_xun', { p_nation:nation.id });
     if(e1) throw e1;
-    nation = nu[0];
+    nation = {...nation, xun:nx};
     try{ memoChoices = JSON.parse(localStorage.getItem('lgc_memo_'+player.token)||'[]'); }catch(e){ memoChoices = []; } // 上书影响新旬
     if(nation.xun > SEASON_LEN){
       const res = await seasonSettle();
@@ -813,26 +850,34 @@ async function nextXun(){
   hideLoading(); busy = false;
 }
 
+let memoLock = false;
 async function pickMemo(k){
   if(!requirePlay()) return;
-  const m = MEMORIALS.find(x=>x.k===k);
-  const idx = memoChoices.indexOf(k);
-  const maxN = rankIdxOf(player.prestige)>=1 ? 2 : 1; // 下士解锁双格上书
-  if(idx>=0){ memoChoices.splice(idx,1); }
-  else{
-    if(memoChoices.length>=maxN){
-      toast(maxN>1?'两格上书位已占满':'布衣只能上一道书——升下士可占两格');
-      return;
+  if(memoLock) return; memoLock = true; // M2 防抖
+  try{
+    const m = MEMORIALS.find(x=>x.k===k);
+    const idx = memoChoices.indexOf(k);
+    const maxN = rankIdxOf(player.prestige)>=1 ? 2 : 1; // 下士解锁双格上书
+    const isAdd = idx<0;
+    if(idx>=0){ memoChoices.splice(idx,1); }
+    else{
+      if(memoChoices.length>=maxN){
+        toast(maxN>1?'两格上书位已占满':'布衣只能上一道书——升下士可占两格');
+        return;
+      }
+      memoChoices.push(k);
     }
-    memoChoices.push(k);
-  }
-  localStorage.setItem('lgc_memo_'+player.token, JSON.stringify(memoChoices));
-  await cloud.database.from('player_actions').insert({
-    token:player.token, nation_key:player.nation_key, xun:nation.xun,
-    action_type:'memorial', dim:k, amount:0, note:`上书【${m.t}】`,
-  });
-  renderMemo();
-  toast('上书已呈君前，下旬定策时君上会参考');
+    localStorage.setItem('lgc_memo_'+player.token, JSON.stringify(memoChoices));
+    if(isAdd){ // M2：取消上书不记账
+      await cloud.database.from('player_actions').insert({
+        token:player.token, nation_key:player.nation_key, xun:nation.xun,
+        action_type:'memorial', dim:k, amount:0, note:`上书【${m.t}】`,
+      });
+      renderLog();
+      toast('上书已呈君前，下旬定策时君上会参考');
+    }
+    renderMemo();
+  } finally { memoLock = false; }
 }
 async function submitYian(){
   if(!requirePlay()) return;
@@ -867,6 +912,7 @@ function renderDims(){
   }).join('');
 }
 function renderDecree(){
+  if(!decree){ $('decreeBox').innerHTML='<div class="hint">诏书未定——请稍候或进旬触发。</div>'; return; }
   $('decreeMeta').textContent = decree.source==='llm' ? 'AI 君主亲笔' : '廷臣代草（AI 暂离）';
   let evHtml = '';
   try{
@@ -887,6 +933,7 @@ function renderDecree(){
     </div>`;
 }
 function renderTasks(){
+  if(!tasks || !tasks.length){ $('taskBox').innerHTML='<div class="hint">本旬暂无差事。</div>'; return; }
   $('taskBox').innerHTML = tasks.map((t,i)=>{
     const opt = t.choices || [{c:'尽心办'},{c:'循例办，稳成而功半'}];
     return `<div class="task">
@@ -896,7 +943,7 @@ function renderTasks(){
       <div class="tdesc">${esc(t.desc)}</div>
       ${t.done
         ? `<div class="result ${t.result.ok?'ok':'fail'}">${t.result.ok?'事成':'事有蹉跎'} —— 国力+${t.result.amt}，声望+${t.result.gain}</div>`
-        : `<div class="choices">${opt.map((o,ci)=>`<button class="minor" data-task="${i}" data-choice="${ci}">${o.c}</button>`).join('')}</div>`}
+        : `<div class="choices">${opt.map((o,ci)=>`<button class="minor" data-task="${i}" data-choice="${ci}">${esc(o.c)}</button>`).join('')}</div>`}
     </div>`;
   }).join('');
   $('taskBox').querySelectorAll('button[data-task]').forEach(b=>{
@@ -986,7 +1033,7 @@ async function renderNews(){
   const ri = rankIdxOf(player.prestige);
   try{
     const d = await loadDiplo();
-    dipHtml = `<div class="logline"><span class="x">邦交</span>${Object.entries(d).map(([k,v])=>`${k.replace('-','与')}<b style="color:${v<0?'var(--red)':'var(--green)'}">${relName(v)}</b>（${v}）`).join('　')}${ri>=4?'　<button class="minor" id="btnMediate">斡旋（大夫之礼）</button>':''}</div>`;
+    dipHtml = `<div class="logline"><span class="x">邦交</span>${Object.entries(d).map(([k,v])=>`${k.split('-').map(x=>(NATION_META[x]||{n:x}).n).join('与')}<b style="color:${v<0?'var(--red)':'var(--green)'}">${relName(v)}</b>（${v}）`).join('　')}${ri>=4?'　<button class="minor" id="btnMediate">斡旋（大夫之礼）</button>':''}</div>`;
   }catch(e){}
   // 本季史书
   let histHtml = '';
@@ -1015,7 +1062,7 @@ async function renderNews(){
   $('newsBox').innerHTML = warHtml + dipHtml + histHtml + newsHtml;
   const bm = $('btnMediate'); if(bm) bm.onclick = mediate;
 }
-function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderLog(); renderNews(); renderFang(); renderKeqing(); }
+function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderKeqing(); renderLog().catch(()=>{}); renderNews().catch(()=>{}); renderFang().catch(()=>{}); }
 
 /* ============ 开局 ============ */
 let selNation = null;
@@ -1111,7 +1158,7 @@ async function restoreAuth(){
       const { data:session, error } = await cloud.auth.handleWorkBuddyCallback.call(cloud.auth);
       if(error){ showAuth('登录失败：'+error.message); return; }
       if(session && session.user){
-        for(const k of ['code','state','provider']) url.searchParams.delete(k);
+        for(const k of ['code','state','provider','error','error_description']) url.searchParams.delete(k);
         history.replaceState(null,'',url.pathname+url.search+url.hash);
         await enterLoggedIn(session.user.id); return;
       }
@@ -1129,6 +1176,8 @@ async function sendSms(){
     if(sent.error){ toast('验证码发送失败：'+sent.error.message); return; }
     window._lgcOtp = { phone, ...sent.data };
     toast('验证码已发送（新旧用户均可直接验证）');
+    const b = $('btnSms'); b.disabled = true; let n = 60;
+    const iv = setInterval(()=>{ n--; b.textContent = n+'s 后重发'; if(n<=0){ clearInterval(iv); b.disabled=false; b.textContent='获取验证码'; } }, 1000);
   }catch(e){ toast('验证码发送失败：'+(e.message||'未知错误')); }
 }
 async function phoneLogin(){
@@ -1148,8 +1197,8 @@ async function phoneLogin(){
 }
 async function wbLogin(){
   try{
-    const back = new URL(location.href); back.pathname='/';
-    for(const k of ['code','state','provider']) back.searchParams.delete(k);
+    const back = new URL(location.origin);
+    for(const k of ['code','state','provider','error']) back.searchParams.delete(k);
     const { data, error } = await cloud.auth.signInWithOAuth({ provider:'workbuddy', redirectTo:back.toString() });
     if(error){ toast('无法发起 WorkBuddy 登录：'+error.message); return; }
     location.assign(data.url);

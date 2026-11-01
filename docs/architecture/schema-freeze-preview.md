@@ -1,7 +1,7 @@
 # 《列国策》事件 Schema v1 冻结预览稿
 
-> 程基岩 · engineering-lead · ARCH-007（Deliverable B）
-> 输入：ADR-001/002/003/005 + ARCH-002~007 全部 schema 决定 + GDD-S1/S2/S3/S7 数据规格
+> 程基岩 · engineering-lead · ARCH-007（Deliverable B）· **ARCH-010 修订（trace 增补 ref_goal_id（GDD-S12 Q3）、信封增补 stratum 字段位（TASK-010/S11））**
+> 输入：ADR-001/002/003/005/006 + ARCH-002~010 全部 schema 决定 + GDD-S1/S2/S3/S7/S12 数据规格 + TASK-010（stratum 分层）
 > **状态：预览稿——待主理人过目后正式冻结**（建议时点：Sprint 2 末，与 Spike ③ 结论同点）
 > 冻结原则：**必填字段只增不改语义；枚举值只增不改值义；消费端必须容忍未知枚举值**（否则拒绝发布与向前兼容均不成立）。
 
@@ -25,6 +25,7 @@
   "trace": {                          // 因果链字段——归因/复盘/史书的唯一凭据
     "proposal_id": "prop_han_x13_007 | null",   // 方略提案 【ARCH-002 / S2 §4.3】
     "decree_id":   "han_x14_edict   | null",    // 诏令（旬号内含）【ARCH-002】
+    "ref_goal_id": "goal_...        | null",    // 诏令目标实例（任务↔诏令目标绑定；任务完成事件必须携带归属目标）【GDD-S12 Q3 / ARCH-010】
     "task_id":     "t_99012         | null",    // 任务实例 【ARCH-002】
     "origin_action_id": "act_...      | null",  // REVOKE/OVERRIDE 的目标动作 【ARCH-005】
     "superseded_by":    "act_...      | null"   // 被覆盖动作指向新动作 【ARCH-005】
@@ -35,12 +36,13 @@
   "delegate_scope": "NONE",           // 权限代理标记 【ARCH-006/007】
   "settlement_state": "SETTLED",      // 动作/事件结算态 【ARCH-005 状态机】
   "origin": "OTHER_TASK | null",      // 收益来源标记（国力总账归因隔离用，可空）【S2 §4.5 / ARCH-002】
+  "stratum": "CORE | RURAL | null",   // 事件时点玩家分层（分层聚合/风控分群输入；null=系统事件或未分层）【TASK-010 / S11 / ARCH-010】
 
   "extensions": { }                   // V1 扩展位（自由字段；永不作为归因/结算依据）
 }
 ```
 
-### 字段来源一览（15 个信封字段）
+### 字段来源一览（17 个信封字段）
 
 | 字段 | 来源 | 用途一句话 |
 |---|---|---|
@@ -49,6 +51,7 @@
 | nation_id | ADR-002 | 分区键（按国家有序消费） |
 | trace.proposal_id | ARCH-002 / S2 N3 | 策功归因链起点（"采某卿之议"） |
 | trace.decree_id | ARCH-002 | 诏令目标归因（策功链中段） |
+| trace.ref_goal_id | GDD-S12 Q3 / ARCH-010 | 任务↔诏令目标绑定（一诏令多目标时归因落到目标粒度） |
 | trace.task_id | ARCH-002 | 任务→收益→双账（策功/事功同源） |
 | trace.origin_action_id | ARCH-005 | 玩家主权：REVOKE/OVERRIDE 目标 |
 | trace.superseded_by | ARCH-005 | 被覆盖动作的痕迹链接（复盘不删史） |
@@ -57,11 +60,12 @@
 | delegate_scope | ARCH-006/007 | 代摄（政治身份转移）vs 守舍（个人自动化）区分 |
 | settlement_state | ARCH-005 | 归因窗口与"未结算可撤销"的判据 |
 | origin | S2 §4.5 / ARCH-002 | 国力总账来源隔离（策功只算直接增量） |
+| stratum | TASK-010 / S11 / ARCH-010 | 事件时点玩家分层快照（分层聚合 O(君主数) 输入、公平性分群）；事件级冗余存储免回表关联 players |
 | extensions | 冻结预留 | V1 扩展（不作任何结算依据） |
 
 ---
 
-## 2. 枚举定稿表（8 组）
+## 2. 枚举定稿表（9 组）
 
 | 枚举 | 值集 | 来源 | 备注 |
 |---|---|---|---|
@@ -73,8 +77,9 @@
 | `authority`（确认矩阵） | AUTO_OK / CONFIRM / MANUAL_ONLY | ARCH-004/005 | 动作白名单数据字段，服务端强制，客户端不可改 |
 | `custody_tier`（托管） | ASSIST / AUTONOMOUS | ARCH-004 | 二元化定稿；无 ONLINE_OFFLINE 枚举（离线由契约与三段判定表达） |
 | 审计事件类型 `audit_action` | ACTION_SUBMITTED / ACTION_CONFIRMED / ACTION_REVOKED / ACTION_OVERRIDDEN / ACTION_EXECUTED / AUTOMATION_SUSPENDED / AUTOMATION_RESUMED / CONTRACT_HALTED / ABSENCE_STATE_CHANGED | ARCH-005/006/007 + S7 | REVOKE/OVERRIDE 即第 3/4 值；透明日志消费此枚举 |
+| `stratum`（玩家分层） | CORE / RURAL | TASK-010 / S11 / ARCH-010 | 信封 `stratum` 字段值集（可空 null=系统事件/未分层）；初版两值随 S11 分层判据定稿可增（只增不改值义） |
 
-**枚举统计：8 组 / 36 个值。**
+**枚举统计：9 组 / 38 个值。**
 
 ---
 
@@ -148,8 +153,8 @@
 ## 4. 冻结范围声明
 
 **本次冻结（v1）**：
-1. 信封全部 15 个字段**名称、语义、必填性**（trace 五字段全必填结构、可空值）；
-2. §2 全部 8 组枚举的值集；
+1. 信封全部 17 个字段**名称、语义、必填性**（trace 六字段全必填结构、可空值）；
+2. §2 全部 9 组枚举的值集（stratum 初版值集 CORE/RURAL，值集可增）；
 3. §3 全部 35 个事件**类型名**（载荷字段按域另行冻结，不阻塞总线接入）。
 
 **明确留 V1 扩展位（本次不冻结）**：
@@ -168,7 +173,7 @@
 | # | 检查项 | 依赖断言（Spike） | 状态 |
 |---|---|---|---|
 | 1 | 缺 trace 必填字段的事件被拒绝发布 | Spike ③ DoD-1 | 预览稿覆盖 ✔ |
-| 2 | 全链 ID 透传无断点（提案→诏令→任务→归因） | Spike ③ DoD-2 | trace 五字段 ✔ |
+| 2 | 全链 ID 透传无断点（提案→诏令→任务→归因） | Spike ③ DoD-2 | trace 六字段（含 ref_goal_id，ARCH-010）✔ |
 | 3 | 双轨账本同源不出叉（delta_event 喂两链） | Spike ③ DoD-3 | trace.task_id + origin ✔ |
 | 4 | Outbox 至少一次送达 + 幂等消费 | Spike ③ DoD-5 | event_id 幂等键 ✔ |
 | 5 | 归因窗口与 source 隔离（S2 §4.5 六条） | Spike ③ DoD-4 | origin + settlement_state + verdict ✔ |
@@ -178,6 +183,8 @@
 | 9 | 代摄行为审计与守舍可区分 | §2.9.4（ARCH-007） | delegate_scope=REGENT_PROXY ✔ |
 | 10 | 消费端容忍未知枚举值（向前兼容） | 演进规则断言（Spike ④ 补） | 演进规则 ✔——**Spike ④ DoD 需补一条未知枚举容忍断言** |
 | 11 | ABSENCE_STATE_CHANGED 全状态迁移留痕 | §2.9.1（ARCH-007） | audit_action + §3 事件类型 ✔ |
+| 12 | ref_goal_id 全链透传与唯一性（任务↔诏令目标绑定） | Spike ③ DoD-4（已含 ref_goal_id 唯一性约束断言，trace 增补后信封有承载位）【GDD-S12 Q3 / ARCH-010】 | trace.ref_goal_id ✔ |
+| 13 | stratum 随事件落账，分层聚合免回表（核心/乡野分桶统计可独立于 players 表完成） | §9.4（solo 文档，分层聚合 ≤2K token 硬上限）+ TASK-010【ARCH-010】 | stratum 字段位 + 枚举 ✔ |
 
 ---
 
