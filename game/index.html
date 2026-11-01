@@ -160,6 +160,7 @@
     <div class="panel-title"><span>上 书</span><small>你的建议会左右君上下旬的方略</small></div>
     <div class="memorial-opts" id="memoBox"></div>
     <div class="hint" id="memoHint">择一而奏。旬末上书最有效。</div>
+    <div id="privBox"></div>
   </div>
   <div class="panel">
     <div class="panel-title"><span>天 下 闻</span><small>列国动向 · 战事 · 近期大事</small></div>
@@ -223,7 +224,7 @@ let player = null;      // {token,name,nation_key,prestige}
 let nation = null;      // 行数据
 let decree = null;      // 本旬诏书
 let tasks = [];         // 本旬任务
-let memoChoice = null;
+let memoChoices = [];   // 上书倾向（数组；下士后可占两格）
 let llmReady = true;
 let busy = false;
 let warState = null;    // {active, progress, warXun}（以秦行为账本）
@@ -234,6 +235,7 @@ function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='blo
 function showLoading(text){ $('loadingText').textContent = text||'朝 堂 肃 静'; $('loading').style.display='flex'; }
 function hideLoading(){ $('loading').style.display='none'; }
 function rankOf(p){ let r=RANKS[0]; for(const x of RANKS){ if(p>=x.v) r=x; } return r; }
+function rankIdxOf(p){ let i=0; for(let k=0;k<RANKS.length;k++){ if(p>=RANKS[k].v) i=k; } return i; }
 function nextRankOf(p){ for(const x of RANKS){ if(p<x.v) return x; } return null; }
 
 /* ============ 数据层 ============ */
@@ -273,7 +275,7 @@ async function listModel(){
   }catch(e){ return null; }
 }
 let modelId = undefined; // 惰性获取
-async function llmDecree(nat, actions, memo){
+async function llmDecree(nat, actions, memos, yian){
   if(!llmReady) return null;
   try{
     if(modelId===undefined) modelId = await listModel();
@@ -282,7 +284,7 @@ async function llmDecree(nat, actions, memo){
     const snapshot = {}; for(const d of DIMS) snapshot[d.n]=nat[d.k];
     const actSummary = actions.length? actions.map(a=>`${a.note}（${(DIMS.find(d=>d.k===a.dim)||{}).n||'—'}+${a.amount||0}）`).join('；') : '本旬尚无臣下报事';
     const sys = `你是先秦${meta.n}国的君主，名叫${meta.m}。人格：${meta.p} 你在一款先秦策略游戏里，每旬向臣下发一道《国策诏》。要求：诏书用先秦语气、带你的性格，正文不超过120字；君心参悟是一句简短的话，透露你真实的决策理由（不暴露数值）。必须恰好派生3个任务，type 只能是"文"或"武"。另附一件本旬发生在国内的 random 事件（好事或坏事均可，amount 在 -6 到 6 之间）。只输出 JSON，不要任何其他文字，格式：{"decree":"诏书正文","quote":"君心参悟的话","focus":"military/economy/livelihood/culture/diplomacy 之一","tasks":[{"title":"任务名","desc":"一句话描述差事","type":"文","dim":"五维之一","reward":数字(5-15)}],"event":{"title":"四字事件名","desc":"一句话描述","dim":"五维之一","amount":数字(-6到6)}}`;
-    const user = `当前国力：${JSON.stringify(snapshot)}。旬号：${nat.xun}。上旬臣下报事：${actSummary}。${memo?`有臣子上书：【${memo.t}】${memo.d}`:'本旬无上书'}。${warState&&warState.active?`【要】国家正处于会战中！战线进度${warState.progress}（100=我方大胜，0=战事不利）。诏书必须围绕战事（筹粮督饷、攻坚拔城、坚壁守御、外交斡旋等），3个任务全部与战事相关。`:''}请颁发本旬国策诏。`;
+    const user = `当前国力：${JSON.stringify(snapshot)}。旬号：${nat.xun}。上旬臣下报事：${actSummary}。${memos.length?`有臣子上书：${memos.map(m=>`【${m.t}】${m.d}`).join('；')}`:'本旬无上书'}${yian?`。有大夫呈议政案（玩家亲笔）："${yian}"——君上请裁夺，可在诏书中回应此案。`:''}。${warState&&warState.active?`【要】国家正处于会战中！战线进度${warState.progress}（100=我方大胜，0=战事不利）。诏书必须围绕战事（筹粮督饷、攻坚拔城、坚壁守御、外交斡旋等），3个任务全部与战事相关。`:''}请颁发本旬国策诏。`;
     let answer = '';
     for await (const chunk of cloud.llm.chat.completions.create({
       model: modelId.id,
@@ -307,7 +309,8 @@ async function llmDecree(nat, actions, memo){
   }catch(e){ console.warn('LLM fail', e&&e.error?e.error.code:e); return null; }
 }
 // 模板诏书（AI 不可用时的兜底）
-function templateDecreeFull(nat, memo){
+function templateDecreeFull(nat, memos){
+  const memo = (memos&&memos[0]) || null;
   const meta = NATION_META[nat.nation_key];
   const warActive = !!(warState&&warState.active);
   const focus = warActive ? 'military' : (memo? memo.k : (DIMS.reduce((a,b)=> nat[a.k]<=nat[b.k]?a:b).k));
@@ -363,12 +366,17 @@ async function ensureDecree(){
     return;
   }
   // 本旬尚无诏书 → 生成（AI 优先，模板兜底）
-  const memo = memoChoice ? MEMORIALS.find(m=>m.k===memoChoice) : null;
+  const memos = (memoChoices||[]).map(k=>MEMORIALS.find(m=>m.k===k)).filter(Boolean);
+  let yian = null;
+  try{
+    const y = JSON.parse(localStorage.getItem('lgc_yian_'+player.token)||'null');
+    if(y && y.text && y.xun >= nation.xun-1) yian = String(y.text).slice(0,40);
+  }catch(e){}
   let prevActions = [];
   try{ prevActions = await dbRead('player_actions', q=>q.eq('nation_key',player.nation_key).eq('xun', nation.xun-1).order('created_at',{ascending:true}).limit(30)); }catch(e){}
-  let gen = await llmDecree(nation, prevActions, memo);
+  let gen = await llmDecree(nation, prevActions, memos, yian);
   let source = 'llm';
-  if(!gen){ gen = templateDecreeFull(nation, memo); source='template'; }
+  if(!gen){ gen = templateDecreeFull(nation, memos); source='template'; }
   const payload = JSON.stringify({decree:gen.content, quote:gen.quote, focus:gen.focus, tasks:gen.tasks, event:gen.event||null});
   const { data, error } = await cloud.database.from('decrees').insert({
     nation_key:player.nation_key, xun:nation.xun, content:payload, quote:gen.quote, focus_dim:gen.focus, source,
@@ -430,6 +438,15 @@ async function settleWar(result){
 async function completeTask(task, choiceIdx){
   if(busy) return; busy = true; showLoading('办 差 中');
   try{
+    // 官职差事上限：上大夫领双差，其余每旬一件
+    const ri = rankIdxOf(player.prestige);
+    const limit = ri>=6 ? 2 : 1;
+    const doneRows = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','task'));
+    if(doneRows.length >= limit){
+      busy=false; hideLoading();
+      toast(limit>1?'本旬两件差事已办满':'本旬差事已办满——欲领双差，须升至上大夫');
+      return;
+    }
     const roll = Math.random();
     const ok = roll < 0.78;
     const amt = ok ? task.reward : Math.ceil(task.reward*0.4);
@@ -482,7 +499,7 @@ async function nextXun(){
       .update({ xun: nation.xun+1, updated_at:new Date().toISOString() }).eq('id', nation.id).select();
     if(e1) throw e1;
     nation = nu[0];
-    memoChoice = localStorage.getItem('lgc_memo_'+player.token); // 上书影响新旬
+    try{ memoChoices = JSON.parse(localStorage.getItem('lgc_memo_'+player.token)||'[]'); }catch(e){ memoChoices = []; } // 上书影响新旬
     await maybeStartWar();
     await loadWarState();
     await ensureDecree();
@@ -493,14 +510,37 @@ async function nextXun(){
 }
 
 async function pickMemo(k){
-  memoChoice = k;
-  localStorage.setItem('lgc_memo_'+player.token, k);
+  const m = MEMORIALS.find(x=>x.k===k);
+  const idx = memoChoices.indexOf(k);
+  const maxN = rankIdxOf(player.prestige)>=1 ? 2 : 1; // 下士解锁双格上书
+  if(idx>=0){ memoChoices.splice(idx,1); }
+  else{
+    if(memoChoices.length>=maxN){
+      toast(maxN>1?'两格上书位已占满':'布衣只能上一道书——升下士可占两格');
+      return;
+    }
+    memoChoices.push(k);
+  }
+  localStorage.setItem('lgc_memo_'+player.token, JSON.stringify(memoChoices));
   await cloud.database.from('player_actions').insert({
     token:player.token, nation_key:player.nation_key, xun:nation.xun,
-    action_type:'memorial', dim:k, amount:0, note:`上书【${MEMORIALS.find(m=>m.k===k).t}】`,
+    action_type:'memorial', dim:k, amount:0, note:`上书【${m.t}】`,
   });
   renderMemo();
   toast('上书已呈君前，下旬定策时君上会参考');
+}
+async function submitYian(){
+  const inp = $('yianInput');
+  const text = (inp&&inp.value||'').trim();
+  if(!text){ toast('议政案不能为空'); return; }
+  localStorage.setItem('lgc_yian_'+player.token, JSON.stringify({xun:nation.xun, text}));
+  await cloud.database.from('player_actions').insert({
+    token:player.token, nation_key:player.nation_key, xun:nation.xun,
+    action_type:'memorial', dim:null, amount:0, note:`呈议政案："${text}"`,
+  });
+  if(inp) inp.value='';
+  renderLog();
+  toast('议政案已呈君前——下旬诏书中君上会裁夺此案');
 }
 
 async function resetGame(){
@@ -558,14 +598,40 @@ function renderTasks(){
   });
 }
 function renderMemo(){
+  const ri = rankIdxOf(player.prestige);
   $('memoBox').innerHTML = MEMORIALS.map(m=>
-    `<span class="memo ${memoChoice===m.k?'sel':''}" data-m="${m.k}" title="${esc(m.d)}">【${m.t}】${esc(m.d)}</span>`).join('');
+    `<span class="memo ${memoChoices.includes(m.k)?'sel':''}" data-m="${m.k}" title="${esc(m.d)}">【${m.t}】${esc(m.d)}</span>`).join('');
   $('memoBox').querySelectorAll('.memo').forEach(el=>{
     el.onclick = ()=> pickMemo(el.dataset.m);
   });
-  $('memoHint').textContent = memoChoice
-    ? `已上书【${MEMORIALS.find(m=>m.k===memoChoice).t}】—— 进入下一旬时君上将参酌此奏`
+  $('memoHint').textContent = memoChoices.length
+    ? `已上书${memoChoices.length}道——进入下一旬时君上将参酌此奏`
     : '择一而奏。旬末上书最有效。';
+  // 官职特权面板
+  const privs = [
+    {need:1, name:'双格上书', desc:'同时保留两条上书倾向'},
+    {need:4, name:'亲笔议政案', desc:'向君上提交一句话国策建议，诏书中获裁夺'},
+    {need:6, name:'领双差', desc:'每旬可办两件差事'},
+  ];
+  let html = '<div style="margin-top:10px;border-top:1px dashed #2c2418;padding-top:8px">' +
+    '<div style="font-size:12px;color:var(--ink-dim);letter-spacing:.2em;margin-bottom:4px">爵 位 特 权</div>';
+  html += privs.map(p=> p.need<=ri
+    ? `<div class="logline">✅ ${p.name}——${p.desc}</div>`
+    : `<div class="logline" style="color:#6e6252">🔒 晋至${RANKS[p.need].n}解锁：${p.name}——${p.desc}</div>`
+  ).join('');
+  if(ri>=4){
+    let yian = null;
+    try{ yian = JSON.parse(localStorage.getItem('lgc_yian_'+player.token)||'null'); }catch(e){}
+    html += `<div style="margin-top:8px">
+      <input type="text" id="yianInput" maxlength="40" placeholder="议政案：一句话国策建议" style="width:62%;text-align:left;font-size:13px;padding:7px 10px">
+      <button class="minor" id="btnYian">呈递议政案</button>
+      ${yian&&yian.xun>=nation.xun?`<div class="hint">本旬已呈："${esc(yian.text)}"</div>`:''}
+    </div>`;
+  }
+  html += '</div>';
+  $('privBox').innerHTML = html;
+  const btn = $('btnYian');
+  if(btn) btn.onclick = submitYian;
 }
 async function renderLog(){
   const rows = await dbRead('player_actions', q=>q.eq('token',player.token).order('created_at',{ascending:false}).limit(12));
@@ -624,7 +690,7 @@ async function startGame(){
     }).select();
     if(error) throw error;
     player = data[0];
-    localStorage.setItem('lgc_memo_'+player.token, '');
+    localStorage.setItem('lgc_memo_'+player.token, '[]');
     document.body.classList.remove('setup-bg');
     $('setup').style.display='none'; $('game').style.display='block';
     await enterWorld();
@@ -638,7 +704,7 @@ async function enterWorld(){
   try{
     nation = await loadNation(player.nation_key);
     if(!nation) throw new Error('世界状态缺失');
-    memoChoice = localStorage.getItem('lgc_memo_'+player.token) || null;
+    try{ memoChoices = JSON.parse(localStorage.getItem('lgc_memo_'+player.token)||'[]'); }catch(e){ memoChoices = []; }
     await loadWarState();
     await ensureDecree();
     renderAll();
