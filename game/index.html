@@ -131,6 +131,24 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 <div id="loading" style="display:none"><div class="spinner"></div><div class="t" id="loadingText">朝 堂 肃 静</div></div>
 <div class="toast" id="toast"></div>
 
+<div id="auth" class="wrap" style="display:none">
+  <h1 style="font-size:34px;color:var(--bronze-l);text-align:center;margin:6vh 0 4px;letter-spacing:.35em">列 国 策</h1>
+  <div style="text-align:center;color:var(--ink-dim);margin-bottom:24px;letter-spacing:.2em">AI 执国 · 君臣共治</div>
+  <div class="panel" style="max-width:520px;margin:0 auto;text-align:center">
+    <p style="font-size:13px;color:var(--ink-dim);line-height:2;margin-bottom:16px">入朝需名籍。登录后进度随账号走，旧游客进度可自动认领。</p>
+    <input type="text" id="phoneInput" maxlength="11" placeholder="手机号（11 位）">
+    <div style="margin:12px 0">
+      <input type="text" id="smsInput" maxlength="6" placeholder="验证码" style="width:130px">
+      <button class="minor" id="btnSms" type="button">获取验证码</button>
+    </div>
+    <button id="btnPhoneLogin">验 证 并 入 朝</button>
+    <div style="margin:16px 0;color:#3a2f20">—— 或 ——</div>
+    <button id="btnWbLogin">使用 WorkBuddy 登录</button>
+    <div style="margin:16px 0"><button class="minor" id="btnSpectate">先观政（不登录只能看，不能行事）</button></div>
+    <div class="hint" id="authHint"></div>
+  </div>
+</div>
+
 <div id="setup" class="wrap" style="display:none">
   <h1>列国策</h1>
   <div class="sub">AI 执国 · 君臣共治 · 试玩版</div>
@@ -150,7 +168,10 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 <div id="game" class="wrap" style="display:none">
   <div id="topbar">
     <div class="who" id="who"></div>
-    <div><button class="minor" id="btnReset" style="border-color:#5a3228;color:#a3705e">弃官重修</button></div>
+    <div>
+      <button class="minor" id="btnLogout" style="display:none">登出</button>
+      <button class="minor" id="btnReset" style="border-color:#5a3228;color:#a3705e">弃官重修</button>
+    </div>
   </div>
   <div class="panel">
     <div class="panel-title"><span>国 力 五 维</span><small id="xunLabel"></small></div>
@@ -174,6 +195,10 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   <div class="panel">
     <div class="panel-title"><span>天 下 闻</span><small>列国动向 · 战事 · 近期大事</small></div>
     <div id="newsBox"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>客 卿</span><small>接入你自带的 AI（密钥只存本机浏览器，绝不上传）</small></div>
+    <div id="keqingBox"></div>
   </div>
   <div class="panel">
     <div class="panel-title"><span>居 官 履 历</span></div>
@@ -395,7 +420,7 @@ async function ensureDecree(){
   let yian = null;
   try{
     const y = JSON.parse(localStorage.getItem('lgc_yian_'+player.token)||'null');
-    if(y && y.text && y.xun >= nation.xun-1) yian = String(y.text).slice(0,40);
+    if(y && y.text && y.xun >= nation.xun-1) yian = (y.regent?'【摄政亲笔·置顶裁夺】':'')+String(y.text).slice(0,40);
   }catch(e){}
   const f = parseFang(nation);
   const fline = FANG.find(x=>x.k===f.line)||FANG[0];
@@ -500,6 +525,7 @@ async function settleWar(result){
 
 /* ============ 方略树（国家级长期研究线） ============ */
 async function pushFanglue(){
+  if(!requirePlay()) return;
   if(busy) return; busy = true; showLoading('推 行 方 略');
   try{
     // 每旬每人一次
@@ -544,8 +570,9 @@ async function pushFanglue(){
 
 /* ============ 外交斡旋（下大夫以上） ============ */
 async function mediate(){
+  if(!requirePlay()) return;
   if(busy) return;
-  if(rankIdxOf(player.prestige)<4){ toast('斡旋乃大夫之礼'); return; }
+  if(rankIdxOf(player.prestige)<4 && player.id!==window._regentId){ toast('斡旋乃大夫之礼'); return; }
   busy = true; showLoading('奔 走 斡 旋');
   try{
     const acted = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','mediate'));
@@ -607,7 +634,84 @@ async function seasonSettle(){
 }
 
 /* ============ 交互 ============ */
-async function completeTask(task, choiceIdx){
+/* ============ 客卿（玩家自带 AI · BYO，TASK-005） ============ */
+function keqingCfg(){
+  try{ return JSON.parse(localStorage.getItem('lgc_keqing')||'null') || {endpoint:'', key:'', model:''}; }
+  catch(e){ return {endpoint:'', key:'', model:''}; }
+}
+async function keqingCall(sys, user){
+  const cfg = keqingCfg();
+  if(!cfg.endpoint || !cfg.key) throw new Error('请先填入 AI 接口地址与密钥');
+  const res = await fetch(cfg.endpoint.replace(/\/+$/,'')+'/chat/completions', {
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':'Bearer '+cfg.key},
+    body: JSON.stringify({ model: cfg.model||'deepseek-chat', messages:[{role:'system',content:sys},{role:'user',content:user}], stream:false, max_tokens:300 }),
+  });
+  if(!res.ok) throw new Error('接口返回 '+res.status+'（若为跨域拦截，请换支持浏览器直连的服务商）');
+  const j = await res.json();
+  const txt = j.choices?.[0]?.message?.content || '';
+  if(!txt) throw new Error('客卿未作答');
+  return txt.trim();
+}
+function renderKeqing(){
+  const cfg = keqingCfg();
+  const canYian = rankIdxOf(player.prestige)>=4;
+  $('keqingBox').innerHTML = `
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
+      <input type="text" id="kqEndpoint" placeholder="接口地址（如 https://api.deepseek.com/v1）" value="${esc(cfg.endpoint)}" style="flex:1;min-width:200px;text-align:left;font-size:12px;padding:6px 10px">
+      <input type="password" id="kqKey" placeholder="API 密钥" value="${esc(cfg.key)}" style="width:150px;text-align:left;font-size:12px;padding:6px 10px">
+      <input type="text" id="kqModel" placeholder="模型名（如 deepseek-chat）" value="${esc(cfg.model)}" style="width:150px;text-align:left;font-size:12px;padding:6px 10px">
+      <button class="minor" id="btnKqSave">保存（只存本机）</button>
+    </div>
+    <div class="choices">
+      <button class="minor" id="btnKqMemo">上书代拟</button>
+      <button class="minor" id="btnKqExplain">诏书解读</button>
+      <button class="minor" id="btnKqTask" ${spectate?'disabled':''}>代办一件差事</button>
+    </div>
+    <div id="kqResult" class="hint" style="margin-top:8px;line-height:1.8">客卿的一切产出均以你的名义呈递、署名担责（白名单结构化，不进君主决策权流）。</div>`;
+  $('btnKqSave').onclick = ()=>{
+    localStorage.setItem('lgc_keqing', JSON.stringify({endpoint:$('kqEndpoint').value.trim(), key:$('kqKey').value.trim(), model:$('kqModel').value.trim()}));
+    toast('客卿已就位（配置仅存本机）');
+  };
+  $('btnKqMemo').onclick = async ()=>{
+    const r = $('kqResult');
+    r.textContent = '客卿正在拟稿……';
+    try{
+      const snapshot={}; for(const d of DIMS) snapshot[d.n]=nation[d.k];
+      const txt = await keqingCall('你是先秦游戏里玩家门下的客卿（AI 谋士）。请根据国势拟一句国策建议（40字内，先秦语气，直陈策略），只输出建议正文。',
+        JSON.stringify({国力:snapshot, 当前旬:nation.xun, 战事中:!!(warState&&warState.active)}));
+      r.innerHTML = `客卿代拟："${esc(txt)}" ${canYian?'<button class="minor" id="btnKqSubmit">呈递此案</button>':'（大夫档可亲呈议政案）'}`;
+      const sb=$('btnKqSubmit');
+      if(sb) sb.onclick = async ()=>{ $('yianInput').value = txt.slice(0,40); await submitYian(); r.textContent='已以你之名呈递。'; };
+    }catch(e){ r.textContent = '客卿失手：'+e.message; }
+  };
+  $('btnKqExplain').onclick = async ()=>{
+    const r = $('kqResult');
+    r.textContent = '客卿正在解读……';
+    try{
+      const txt = await keqingCall('你是先秦游戏里玩家门下的客卿。请用一句白话解读君上这份诏书的意图与玩家应对要点（60字内）。只输出解读。',
+        `诏书：${decree.text||''} 君心参悟：${decree.quote||''}`);
+      r.innerHTML = `客卿解读：${esc(txt)}`;
+    }catch(e){ r.textContent = '客卿失手：'+e.message; }
+  };
+  $('btnKqTask').onclick = async ()=>{
+    const t = tasks.find(x=>!x.done);
+    if(!t){ toast('本旬差事已尽'); return; }
+    const r = $('kqResult');
+    r.textContent = '客卿正在权衡……';
+    try{
+      const txt = await keqingCall('你是先秦游戏里玩家门下的客卿。面对这件差事，只输出 JSON：{"choice":0或1,"reason":"一句话"}。choice 0=尽心办（风险低收益高），1=取巧办（省力但收益减半）。',
+        `差事：${t.title}——${t.desc}（${t.type}事，宜利${t.reward}）`);
+      let j=null; try{ j=JSON.parse(txt.match(/\{[\s\S]*\}/)[0]); }catch(e){}
+      const choice = j && j.choice===1 ? 1 : 0;
+      r.textContent = `客卿决定${choice===0?'尽心办':'取巧办'}：${(j&&j.reason)||''}`;
+      await completeTask(t, choice, true);
+      renderAll();
+    }catch(e){ r.textContent = '客卿失手：'+e.message; }
+  };
+}
+async function completeTask(task, choiceIdx, viaKeqing){
+  if(!requirePlay()) return;
   if(busy) return; busy = true; showLoading('办 差 中');
   try{
     // 官职差事上限：上大夫领双差，其余每旬一件
@@ -619,8 +723,7 @@ async function completeTask(task, choiceIdx){
       toast(limit>1?'本旬两件差事已办满':'本旬差事已办满——欲领双差，须升至上大夫');
       return;
     }
-    const roll = Math.random();
-    const ok = roll < 0.78;
+    const ok = choiceIdx===0 ? (Math.random()<0.78) : true; // 尽心办有风险；循例办必成（GDD-S12 勘误采纳）
     const amt = ok ? task.reward : Math.ceil(task.reward*0.4);
     const dimKey = task.dim;
     // 会战推进（秦攻 +，楚守 −；三节点依次攻防，账本在秦行）
@@ -664,7 +767,7 @@ async function completeTask(task, choiceIdx){
     if(e1) throw e1;
     nation = upd[0];
     // 声望更新
-    const gain = ok ? task.reward : Math.ceil(task.reward/2);
+    const gain = ok ? 4 : 2; // 声望与国力解耦（GDD-S12 勘误采纳）
     const { data:pu, error:e2 } = await cloud.database.from('players')
       .update({ prestige: (player.prestige||0)+gain }).eq('id', player.id).select();
     if(e2) throw e2;
@@ -675,7 +778,7 @@ async function completeTask(task, choiceIdx){
     await cloud.database.from('player_actions').insert({
       token:player.token, nation_key:player.nation_key, xun:nation.xun,
       action_type:'task', dim:dimKey, amount:amt,
-      note:`${task.title}·${choiceIdx===0?'尽心办':'取巧办'}${ok?'·成':'·失'}${warNote}`,
+      note:`${viaKeqing?'【客卿代笔】':''}${task.title}·${choiceIdx===0?'尽心办':'循例办'}${ok?'·成':'·失'}${warNote}`,
     });
     // 标记任务完成（本地）
     task.done = true; task.result = {ok, amt, gain};
@@ -686,6 +789,7 @@ async function completeTask(task, choiceIdx){
 }
 
 async function nextXun(){
+  if(!requirePlay()) return;
   if(busy) return; busy = true;
   showLoading('君 上 定 策');
   try{
@@ -710,6 +814,7 @@ async function nextXun(){
 }
 
 async function pickMemo(k){
+  if(!requirePlay()) return;
   const m = MEMORIALS.find(x=>x.k===k);
   const idx = memoChoices.indexOf(k);
   const maxN = rankIdxOf(player.prestige)>=1 ? 2 : 1; // 下士解锁双格上书
@@ -730,10 +835,11 @@ async function pickMemo(k){
   toast('上书已呈君前，下旬定策时君上会参考');
 }
 async function submitYian(){
+  if(!requirePlay()) return;
   const inp = $('yianInput');
   const text = (inp&&inp.value||'').trim();
   if(!text){ toast('议政案不能为空'); return; }
-  localStorage.setItem('lgc_yian_'+player.token, JSON.stringify({xun:nation.xun, text}));
+  localStorage.setItem('lgc_yian_'+player.token, JSON.stringify({xun:nation.xun, text, regent:window._regentId===player.id}));
   await cloud.database.from('player_actions').insert({
     token:player.token, nation_key:player.nation_key, xun:nation.xun,
     action_type:'memorial', dim:null, amount:0, note:`呈议政案："${text}"`,
@@ -782,7 +888,7 @@ function renderDecree(){
 }
 function renderTasks(){
   $('taskBox').innerHTML = tasks.map((t,i)=>{
-    const opt = t.choices || [{c:'尽心办'},{c:'取巧办，省力而功半'}];
+    const opt = t.choices || [{c:'尽心办'},{c:'循例办，稳成而功半'}];
     return `<div class="task">
       <div class="thead"><span><span class="tname">${t.war_side?'⚔ ':''}${esc(t.title)}</span>
         <span class="tag ${t.type==='武'?'wu':'wen'}">${t.type==='武'?'武事':'文事'}</span></span>
@@ -842,7 +948,7 @@ async function renderLog(){
 function renderWho(){
   const r = rankOf(player.prestige); const nx = nextRankOf(player.prestige);
   $('who').innerHTML = `${esc(player.name)} · ${NATION_META[player.nation_key].n}国
-    <span class="rank-pill">${r.n}</span>
+    <span class="rank-pill">${r.n}</span>${window._regentId===player.id?'<span class="rank-pill" style="border-color:var(--seal);color:#d49a8a">摄政</span>':''}
     <small style="margin-left:8px">声望 ${player.prestige}${nx?`（${nx.n} 还差 ${nx.v-player.prestige}）`:'（已至顶峰）'}</small>`;
 }
 async function renderFang(){
@@ -891,6 +997,15 @@ async function renderNews(){
       histHtml = `<div class="event-card" style="border-style:solid"><span class="et">太史令曰</span><span class="ed">${esc(j.history)}<br><small style="color:var(--bronze)">${esc(j.ranking||'')}</small></span></div>`;
     }
   }catch(e){}
+  // 摄政判定（TASK-009 最简版）：本国大夫档以上、声望最高者
+  try{
+    const ps = await dbRead('players', q=>q.eq('nation_key',player.nation_key).order('prestige',{ascending:false}).limit(10));
+    const regent = ps.find(p=>rankIdxOf(p.prestige)>=4);
+    window._regentId = regent ? regent.id : null;
+    if(regent){
+      dipHtml += '<div class="logline"><span class="x">摄政</span>' + esc(regent.name) + '（' + RANKS[rankIdxOf(regent.prestige)].n + ' · 声望' + regent.prestige + '）' + (window._regentId===player.id?'——正是阁下':'') + '</div>';
+    }
+  }catch(e){}
   const newsHtml = rows.map(r=>{
     let ev=''; try{ ev = r.last_event?JSON.parse(r.last_event):null; }catch(e){}
     const evTxt = ev ? ` · ${esc(ev.title)}` : '';
@@ -900,7 +1015,7 @@ async function renderNews(){
   $('newsBox').innerHTML = warHtml + dipHtml + histHtml + newsHtml;
   const bm = $('btnMediate'); if(bm) bm.onclick = mediate;
 }
-function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderLog(); renderNews(); renderFang(); }
+function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderLog(); renderNews(); renderFang(); renderKeqing(); }
 
 /* ============ 开局 ============ */
 let selNation = null;
@@ -946,30 +1061,133 @@ async function enterWorld(){
   hideLoading();
 }
 
-/* ============ 启动 ============ */
+/* ============ 启动与登录 ============ */
+let spectate = false;
+function requirePlay(){
+  if(spectate){ toast('观政模式：登录后才能行事'); return false; }
+  return true;
+}
+function showAuth(msg){
+  $('auth').style.display='block'; $('game').style.display='none'; $('setup').style.display='none';
+  document.body.classList.add('setup-bg');
+  if(msg) $('authHint').textContent = msg;
+  hideLoading();
+}
+async function enterLoggedIn(uid){
+  showLoading('验 明 名 籍');
+  try{
+    let rows = await dbRead('players', q=>q.eq('owner_id', uid).order('created_at',{ascending:false}).limit(1));
+    if(!rows[0]){
+      // 认领旧游客进度（token 匹配且未绑定的行）
+      const legacy = await dbRead('players', q=>q.eq('token', guestToken()).is('owner_id', null).limit(1));
+      if(legacy[0]){
+        const { data:claimed } = await cloud.database.from('players').update({owner_id: uid}).eq('id', legacy[0].id).select();
+        rows = claimed||[];
+        if(rows[0]) toast('已认领旧游客进度');
+      }
+    }
+    if(rows[0]){
+      player = rows[0];
+      // 分层标注（TASK-010）：上士以上为核心层
+      const want = rankIdxOf(player.prestige)>=3 ? 'core' : 'rural';
+      if(player.stratum!==want){ await cloud.database.from('players').update({stratum:want}).eq('id',player.id); player.stratum=want; }
+      document.body.classList.remove('setup-bg');
+      $('auth').style.display='none'; $('setup').style.display='none'; $('game').style.display='block';
+      $('btnLogout').style.display='inline-block';
+      await enterWorld();
+    }else{
+      document.body.classList.remove('setup-bg');
+      $('auth').style.display='none'; renderSetup(); $('setup').style.display='block';
+      $('btnLogout').style.display='inline-block';
+      hideLoading();
+    }
+  }catch(e){ showAuth('名籍加载失败：'+(e.message||'未知错误')); }
+}
+async function restoreAuth(){
+  const url = new URL(location.href);
+  if(url.searchParams.has('code') || url.searchParams.has('error')){
+    const provider = url.searchParams.get('provider');
+    if(provider==='workbuddy' && typeof cloud.auth.handleWorkBuddyCallback==='function'){
+      const { data:session, error } = await cloud.auth.handleWorkBuddyCallback.call(cloud.auth);
+      if(error){ showAuth('登录失败：'+error.message); return; }
+      if(session && session.user){
+        for(const k of ['code','state','provider']) url.searchParams.delete(k);
+        history.replaceState(null,'',url.pathname+url.search+url.hash);
+        await enterLoggedIn(session.user.id); return;
+      }
+    }else if(provider){ showAuth('该登录方式暂不可用，请用手机验证码'); return; }
+  }
+  const { data:session } = await cloud.auth.getSession();
+  if(session && session.user){ await enterLoggedIn(session.user.id); return; }
+  showAuth();
+}
+async function sendSms(){
+  const phone = $('phoneInput').value.trim();
+  if(!/^1\d{10}$/.test(phone)){ toast('请输入正确的 11 位手机号'); return; }
+  try{
+    const sent = await cloud.auth.sendOtp({ phone });
+    if(sent.error){ toast('验证码发送失败：'+sent.error.message); return; }
+    window._lgcOtp = { phone, ...sent.data };
+    toast('验证码已发送（新旧用户均可直接验证）');
+  }catch(e){ toast('验证码发送失败：'+(e.message||'未知错误')); }
+}
+async function phoneLogin(){
+  const phone = $('phoneInput').value.trim();
+  const token = $('smsInput').value.trim();
+  const p = window._lgcOtp;
+  if(!p || p.phone!==phone){ toast('请先获取验证码'); return; }
+  showLoading('验 证 中');
+  try{
+    const done = await cloud.auth.verifyOtp({ phone:p.phone, verificationId:p.verificationId, isExistingUser:p.isExistingUser, token });
+    if(done.error){ hideLoading(); toast('验证失败：'+done.error.message); return; }
+    const s = await cloud.auth.getSession();
+    window._lgcOtp = null;
+    if(s.data && s.data.user) await enterLoggedIn(s.data.user.id);
+    else { hideLoading(); toast('验证通过但未取得会话，请重试'); }
+  }catch(e){ hideLoading(); toast('验证失败：'+(e.message||'未知错误')); }
+}
+async function wbLogin(){
+  try{
+    const back = new URL(location.href); back.pathname='/';
+    for(const k of ['code','state','provider']) back.searchParams.delete(k);
+    const { data, error } = await cloud.auth.signInWithOAuth({ provider:'workbuddy', redirectTo:back.toString() });
+    if(error){ toast('无法发起 WorkBuddy 登录：'+error.message); return; }
+    location.assign(data.url);
+  }catch(e){ toast('无法发起 WorkBuddy 登录：'+(e.message||'未知错误')); }
+}
+async function doLogout(){
+  try{ await cloud.auth.signOut(); }catch(e){}
+  location.reload();
+}
 (async function boot(){
   showLoading('开 卷');
   try{
-    const p = await loadPlayer();
-    if(p){
-      player = p;
-      $('setup').style.display='none'; $('game').style.display='block';
-      await enterWorld();
-    }else{
-      document.body.classList.add('setup-bg');
-      renderSetup(); $('setup').style.display='block';
-      hideLoading();
-    }
+    await restoreAuth();
   }catch(e){
-    toast('连接云服失败，请刷新重试');
-    document.body.classList.add('setup-bg');
-    renderSetup(); $('setup').style.display='block';
-    hideLoading();
+    showAuth('云服连接失败，请刷新重试');
   }
   $('btnStart').onclick = startGame;
   $('btnNext').onclick = nextXun;
   $('btnReset').onclick = resetGame;
+  $('btnLogout').onclick = doLogout;
+  $('btnSms').onclick = sendSms;
+  $('btnPhoneLogin').onclick = phoneLogin;
+  $('btnWbLogin').onclick = wbLogin;
+  $('btnSpectate').onclick = ()=>{ spectate=true; startSpectate(); };
 })();
+async function startSpectate(){
+  showLoading('观 政');
+  try{
+    player = {token:'spectator', name:'观政者', nation_key:'qin', prestige:0};
+    document.body.classList.remove('setup-bg');
+    $('auth').style.display='none'; $('game').style.display='block';
+    nation = await loadNation('qin');
+    await loadWarState();
+    renderAll();
+    toast('观政模式：可看列国局势，登录后才能入朝行事');
+  }catch(e){ toast('加载失败：'+(e.message||'未知错误')); }
+  hideLoading();
+}
 </script>
 </body>
 </html>
