@@ -147,6 +147,7 @@
   <div class="panel">
     <div class="panel-title"><span>国 力 五 维</span><small id="xunLabel"></small></div>
     <div class="dims" id="dims"></div>
+    <div id="fangBox"></div>
   </div>
   <div class="panel">
     <div class="panel-title"><span>朝 堂 · 国 策 诏</span><small id="decreeMeta"></small></div>
@@ -219,6 +220,15 @@ const EVENTS = [
   {title:'币制紊乱', desc:'私钱横行于市，物价腾贵。', dim:'economy', amount:-3},
   {title:'边民内附', desc:'邻国流民涌入边境，需善加安置。', dim:'livelihood', amount:-3},
 ];
+const FANG = [ // 方略树：每线 6 格，每格 +2 对应维，成线再 +5（数值推导见任务卡 TASK-008）
+  {k:'junzhi', n:'军制', dim:'military', cell:'更卒番休之制渐成，军力为之一振。'},
+  {k:'bianfa', n:'变法', dim:'economy', cell:'新法推行，府库日丰。'},
+  {k:'shuili', n:'水利', dim:'livelihood', cell:'沟渠纵横，田亩得灌。'},
+  {k:'zongheng', n:'纵横', dim:'diplomacy', cell:'使节四出，与国渐多。'},
+];
+const FANG_CELLS = 6;
+const WAR_NODES = ['边城','雄关','王都']; // 秦攻楚守：三节点依次攻防
+const SEASON_LEN = 12; // 一季 12 旬
 
 let player = null;      // {token,name,nation_key,prestige}
 let nation = null;      // 行数据
@@ -275,7 +285,7 @@ async function listModel(){
   }catch(e){ return null; }
 }
 let modelId = undefined; // 惰性获取
-async function llmDecree(nat, actions, memos, yian){
+async function llmDecree(nat, actions, memos, yian, extraCtx){
   if(!llmReady) return null;
   try{
     if(modelId===undefined) modelId = await listModel();
@@ -284,7 +294,7 @@ async function llmDecree(nat, actions, memos, yian){
     const snapshot = {}; for(const d of DIMS) snapshot[d.n]=nat[d.k];
     const actSummary = actions.length? actions.map(a=>`${a.note}（${(DIMS.find(d=>d.k===a.dim)||{}).n||'—'}+${a.amount||0}）`).join('；') : '本旬尚无臣下报事';
     const sys = `你是先秦${meta.n}国的君主，名叫${meta.m}。人格：${meta.p} 你在一款先秦策略游戏里，每旬向臣下发一道《国策诏》。要求：诏书用先秦语气、带你的性格，正文不超过120字；君心参悟是一句简短的话，透露你真实的决策理由（不暴露数值）。必须恰好派生3个任务，type 只能是"文"或"武"。另附一件本旬发生在国内的 random 事件（好事或坏事均可，amount 在 -6 到 6 之间）。只输出 JSON，不要任何其他文字，格式：{"decree":"诏书正文","quote":"君心参悟的话","focus":"military/economy/livelihood/culture/diplomacy 之一","tasks":[{"title":"任务名","desc":"一句话描述差事","type":"文","dim":"五维之一","reward":数字(5-15)}],"event":{"title":"四字事件名","desc":"一句话描述","dim":"五维之一","amount":数字(-6到6)}}`;
-    const user = `当前国力：${JSON.stringify(snapshot)}。旬号：${nat.xun}。上旬臣下报事：${actSummary}。${memos.length?`有臣子上书：${memos.map(m=>`【${m.t}】${m.d}`).join('；')}`:'本旬无上书'}${yian?`。有大夫呈议政案（玩家亲笔）："${yian}"——君上请裁夺，可在诏书中回应此案。`:''}。${warState&&warState.active?`【要】国家正处于会战中！战线进度${warState.progress}（100=我方大胜，0=战事不利）。诏书必须围绕战事（筹粮督饷、攻坚拔城、坚壁守御、外交斡旋等），3个任务全部与战事相关。`:''}请颁发本旬国策诏。`;
+    const user = `当前国力：${JSON.stringify(snapshot)}。旬号：${nat.xun}。上旬臣下报事：${actSummary}。${memos.length?`有臣子上书：${memos.map(m=>`【${m.t}】${m.d}`).join('；')}`:'本旬无上书'}${yian?`。有大夫呈议政案（玩家亲笔）："${yian}"——君上请裁夺，可在诏书中回应此案。`:''}。${extraCtx||''}${warState&&warState.active?`【要】国家正处于会战中！战线进度${warState.progress}（100=我方大胜，0=战事不利）。诏书必须围绕战事（筹粮督饷、攻坚拔城、坚壁守御、外交斡旋等），3个任务全部与战事相关。`:''}请颁发本旬国策诏。`;
     let answer = '';
     for await (const chunk of cloud.llm.chat.completions.create({
       model: modelId.id,
@@ -372,9 +382,17 @@ async function ensureDecree(){
     const y = JSON.parse(localStorage.getItem('lgc_yian_'+player.token)||'null');
     if(y && y.text && y.xun >= nation.xun-1) yian = String(y.text).slice(0,40);
   }catch(e){}
+  const f = parseFang(nation);
+  const fline = FANG.find(x=>x.k===f.line)||FANG[0];
+  let dipTxt = '';
+  try{
+    const d = await loadDiplo();
+    dipTxt = Object.entries(d).map(([k,v])=>`${k.replace('-','与')}${relName(v)}(${v})`).join('，');
+  }catch(e){}
+  const extraCtx = `当前方略：${fline.n}·第${f.lv}/${FANG_CELLS}格。列国外交：${dipTxt}。`;
   let prevActions = [];
   try{ prevActions = await dbRead('player_actions', q=>q.eq('nation_key',player.nation_key).eq('xun', nation.xun-1).order('created_at',{ascending:true}).limit(30)); }catch(e){}
-  let gen = await llmDecree(nation, prevActions, memos, yian);
+  let gen = await llmDecree(nation, prevActions, memos, yian, extraCtx);
   let source = 'llm';
   if(!gen){ gen = templateDecreeFull(nation, memos); source='template'; }
   const payload = JSON.stringify({decree:gen.content, quote:gen.quote, focus:gen.focus, tasks:gen.tasks, event:gen.event||null});
@@ -395,43 +413,182 @@ async function ensureDecree(){
   }
 }
 
-/* ============ 会战（以秦行为账本，秦攻楚守） ============ */
+/* ============ 会战（三节点，以秦行为账本，秦攻楚守） ============ */
+function parseFang(nat){
+  try{ const f=JSON.parse(nat.fanglue||'null'); if(f&&f.line) return f; }catch(e){}
+  return {line:FANG[0].k, lv:0, done:[]};
+}
+function relName(v){
+  if(v<=-50) return '敌对'; if(v<0) return '冷淡'; if(v<30) return '平常'; return '修好';
+}
+async function loadDiplo(){
+  const q = await loadNation('qin');
+  try{ return JSON.parse((q&&q.diplo)||'null') || {'qin-chu':-20,'qin-qi':10,'chu-qi':0}; }
+  catch(e){ return {'qin-chu':-20,'qin-qi':10,'chu-qi':0}; }
+}
+async function saveDiplo(d){
+  const q = await loadNation('qin');
+  if(q) await cloud.database.from('nations').update({diplo:JSON.stringify(d), updated_at:new Date().toISOString()}).eq('id',q.id);
+}
 async function loadWarState(){
   const q = await loadNation('qin');
   if(q && q.war_active){
-    warState = {active:true, progress:q.war_progress, warXun:q.war_xun};
-    // 超 3 旬强制结算
-    if(nation.xun - q.war_xun >= 3) await settleWar(q.war_progress>=60?'qin_win':(q.war_progress<=40?'chu_win':'stale'));
-  }else warState = {active:false, progress:50, warXun:0};
+    warState = {active:true, progress:q.war_progress, warXun:q.war_xun, node:q.war_node||0};
+    // 超 3 旬强制结算：按已陷节点数定胜负
+    if(nation.xun - q.war_xun >= 3) await settleWar((q.war_node||0)>=2?'qin_win':((q.war_node||0)>=1?'qin_partial':'stale'));
+  }else warState = {active:false, progress:50, warXun:0, node:0};
 }
 async function maybeStartWar(){
   if(nation.xun>1 && nation.xun%3===1 && !(warState&&warState.active)){
     const q = await loadNation('qin');
     if(q && !q.war_active){
-      const { data } = await cloud.database.from('nations').update({war_active:true, war_progress:50, war_xun:nation.xun, updated_at:new Date().toISOString()}).eq('id',q.id).select();
-      if(data&&data[0]) warState = {active:true, progress:50, warXun:nation.xun};
+      const { data } = await cloud.database.from('nations').update({war_active:true, war_progress:0, war_xun:nation.xun, war_node:0, updated_at:new Date().toISOString()}).eq('id',q.id).select();
+      if(data&&data[0]) warState = {active:true, progress:0, warXun:nation.xun, node:0};
+      const d = await loadDiplo(); d['qin-chu']=-60; await saveDiplo(d);
+      // 开战事件写入双方 last_event
+      for(const key of ['qin','chu']){
+        const nat = await loadNation(key);
+        if(nat) await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:'秦楚开战', desc:'秦师东出，兵锋直指楚境——三座城邑依次攻防。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',nat.id);
+      }
     }
   }
+}
+async function captureNode(nat, node){
+  // 节点陷落：攻方小赚，守方失血
+  const clamp = v => Math.max(5,Math.min(100,v));
+  const updQ = {military:clamp((nat.military||0)+4), economy:clamp((nat.economy||0)+2)};
+  return updQ;
 }
 async function settleWar(result){
   const q = await loadNation('qin'); const c = await loadNation('chu');
   if(!q||!c) return;
   const dq={}, dc={};
+  const node = q.war_node||0;
   let title, desc;
-  if(result==='qin_win'){ dq.military=8; dq.economy=5; dc.economy=-8; dc.livelihood=-5; title='秦师大胜'; desc='秦军攻克楚地城邑，楚国被迫割地请和。'; }
+  if(result==='qin_win'){ dq.military=8; dq.economy=5; dc.economy=-8; dc.livelihood=-5; title='秦师大胜'; desc='王都陷落，楚被迫割地请和。'; }
+  else if(result==='qin_partial'){ dq.military=4; dq.economy=2; dc.economy=-4; dc.livelihood=-2; title='秦获小胜'; desc='秦军陷边城而粮尽，楚失一城得存。'; }
   else if(result==='chu_win'){ dc.military=8; dq.diplomacy=-5; dq.economy=-3; title='楚军守成'; desc='楚军坚壁清野，秦师粮尽而返。'; }
   else { dq.military=2; dc.military=2; title='会战相持'; desc='秦楚鏖战不下，各自罢兵休整。'; }
   const clamp = v => Math.max(5,Math.min(100,v));
-  const updQ = {war_active:false, war_progress:50, updated_at:new Date().toISOString(), last_event:JSON.stringify({xun:nation.xun, title, desc, amount:0, dim:null})};
+  const updQ = {war_active:false, war_progress:0, war_node:0, updated_at:new Date().toISOString(), last_event:JSON.stringify({xun:nation.xun, title, desc, amount:0, dim:null})};
   for(const [k,v] of Object.entries(dq)) updQ[k]=clamp((q[k]||0)+v);
-  const updC = {updated_at:new Date().toISOString(), last_event:JSON.stringify({xun:nation.xun, title, desc, amount:0, dim:null})};
+  const updC = {war_active:false, war_progress:0, war_node:0, updated_at:new Date().toISOString(), last_event:JSON.stringify({xun:nation.xun, title, desc, amount:0, dim:null})};
   for(const [k,v] of Object.entries(dc)) updC[k]=clamp((c[k]||0)+v);
   await cloud.database.from('nations').update(updQ).eq('id',q.id);
   await cloud.database.from('nations').update(updC).eq('id',c.id);
-  warState = {active:false, progress:50, warXun:0};
+  const d = await loadDiplo(); d['qin-chu']=(result==='qin_win')?-80:((result==='chu_win')?-30:-45); await saveDiplo(d);
+  warState = {active:false, progress:0, warXun:0, node:0};
   if(player.nation_key==='qin') nation = {...nation, ...updQ};
   if(player.nation_key==='chu') nation = {...nation, ...updC};
   return {title, desc};
+}
+
+/* ============ 方略树（国家级长期研究线） ============ */
+async function pushFanglue(){
+  if(busy) return; busy = true; showLoading('推 行 方 略');
+  try{
+    // 每旬每人一次
+    const acted = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','fanglue'));
+    if(acted.length>=1){ busy=false; hideLoading(); toast('本旬已推动过方略，且待下旬'); return; }
+    const f = parseFang(nation);
+    const lineDef = FANG.find(x=>x.k===f.line)||FANG[0];
+    const roll = Math.random();
+    const ok = roll < 0.7;
+    let msg;
+    if(ok){
+      f.lv += 1;
+      const clamp = v => Math.max(5,Math.min(100,v));
+      const upd = {[lineDef.dim]: clamp((nation[lineDef.dim]||0)+2)};
+      let doneMsg = '';
+      if(f.lv>=FANG_CELLS){
+        // 成线：额外 +5，并切换到下一条未成线
+        upd[lineDef.dim] = clamp((upd[lineDef.dim]||0)+5);
+        f.done = [...(f.done||[]), f.line];
+        const next = FANG.find(x=>!f.done.includes(x.k)) || FANG[0];
+        f.line = next.k; f.lv = 0;
+        doneMsg = `【${lineDef.n}】方略功成！全国转向【${next.n}】。`;
+      }else{
+        doneMsg = `【${lineDef.n}】推进至第${f.lv}格。${lineDef.cell}`;
+      }
+      upd.fanglue = JSON.stringify(f);
+      upd.updated_at = new Date().toISOString();
+      const { data:nu } = await cloud.database.from('nations').update(upd).eq('id',nation.id).select();
+      if(nu&&nu[0]) nation = nu[0];
+      const { data:pu } = await cloud.database.from('players').update({prestige:(player.prestige||0)+3}).eq('id',player.id).select();
+      if(pu&&pu[0]) player = pu[0];
+      await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'fanglue', dim:lineDef.dim, amount:2, note:`推动方略【${lineDef.n}】·成`});
+      msg = doneMsg + ' 声望+3';
+    }else{
+      await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'fanglue', dim:lineDef.dim, amount:0, note:`推动方略【${lineDef.n}】·受阻`});
+      msg = '方略推行受阻（朝议未齐），下旬再试。';
+    }
+    renderAll(); toast(msg);
+  }catch(e){ toast('推行失败：'+(e.message||'未知错误')); }
+  hideLoading(); busy = false;
+}
+
+/* ============ 外交斡旋（下大夫以上） ============ */
+async function mediate(){
+  if(busy) return;
+  if(rankIdxOf(player.prestige)<4){ toast('斡旋乃大夫之礼'); return; }
+  busy = true; showLoading('奔 走 斡 旋');
+  try{
+    const acted = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','mediate'));
+    if(acted.length>=1){ busy=false; hideLoading(); toast('本旬已斡旋过，且待下旬'); return; }
+    const d = await loadDiplo();
+    const keys = Object.keys(d);
+    const worst = keys.reduce((a,b)=> d[a]<=d[b]?a:b);
+    const ok = Math.random()<0.7;
+    if(ok){ d[worst] = Math.min(0, d[worst]+8); }
+    else { d[worst] = d[worst]-2; }
+    await saveDiplo(d);
+    await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'mediate', dim:'diplomacy', amount:ok?8:-2, note:`斡旋${worst.replace('-','·')}${ok?'·成':'·败'}`});
+    renderAll();
+    toast(ok?`斡旋有成——${worst.replace('-','与')}关系回暖（${relName(d[worst])}）`:'斡旋受挫，两国使节不欢而散');
+  }catch(e){ toast('斡旋失败：'+(e.message||'未知错误')); }
+  hideLoading(); busy = false;
+}
+
+/* ============ 赛季结算与史书 ============ */
+async function seasonSettle(){
+  const rows = await dbRead('nations', q=>q.order('id'));
+  const scored = rows.map(r=>({key:r.nation_key, total:(r.military||0)+(r.economy||0)+(r.livelihood||0)+(r.culture||0)+(r.diplomacy||0)})).sort((a,b)=>b.total-a.total);
+  const rankTxt = scored.map((s,i)=>`${i+1}.${NATION_META[s.key].n}国（国力${s.total}）`).join('，');
+  let history = null;
+  try{
+    if(llmReady){
+      if(modelId===undefined) modelId = await listModel();
+      if(modelId){
+        let ans='';
+        for await (const chunk of cloud.llm.chat.completions.create({
+          model: modelId.id,
+          messages:[
+            {role:'system', content:'你是列国的太史令，为本季撰写一卷简短史书。文风仿《史记》本纪末尾的"太史公曰"，80字以内，点评三国兴衰。只输出史书正文。'},
+            {role:'user', content:`赛季结束。排名：${rankTxt}。共历经${SEASON_LEN}旬，其间或有会战、灾祥、变法。请落笔。`}
+          ],
+          stream:true, max_tokens:200,
+        })){ if(chunk.choices[0]?.delta?.content) ans += chunk.choices[0].delta.content; }
+        if(ans.trim()) history = ans.trim().slice(0,200);
+      }
+    }
+  }catch(e){}
+  if(!history){
+    history = `太史令曰：本季${SEASON_LEN}旬，${scored[0]?NATION_META[scored[0].key].n:''}国最为强盛，${scored[1]?NATION_META[scored[1].key].n:''}国次之。列国征伐不休，然百姓耕织如故。兴废有时，惟愿来季诸君勉之。`;
+  }
+  await cloud.database.from('decrees').insert({nation_key:'tianxia', xun:1, content:JSON.stringify({history, ranking:rankTxt}), quote:history.slice(0,60), focus_dim:null, source:'history'});
+  // 重置世界：国力回 40、旬回 1、战事/方略/外交清空（声望作为跨季遗产保留）
+  for(const r of rows){
+    const bonus = (scored[0] && scored[0].key===r.nation_key) ? 4 : 0; // 上季霸主开局微优势
+    await cloud.database.from('nations').update({
+      xun:1, military:40+bonus, economy:40, livelihood:40, culture:40, diplomacy:40,
+      war_active:false, war_progress:0, war_node:0, war_xun:0,
+      fanglue:JSON.stringify({line:'junzhi', lv:0, done:[]}),
+      diplo:JSON.stringify({'qin-chu':-20,'qin-qi':10,'chu-qi':0}),
+      last_event:JSON.stringify({xun:1, title:'新季开启', desc:'史册已定，列国重开。', amount:0, dim:null}),
+      updated_at:new Date().toISOString(),
+    }).eq('id',r.id);
+  }
+  return {history, rankTxt};
 }
 
 /* ============ 交互 ============ */
@@ -451,16 +608,39 @@ async function completeTask(task, choiceIdx){
     const ok = roll < 0.78;
     const amt = ok ? task.reward : Math.ceil(task.reward*0.4);
     const dimKey = task.dim;
-    // 会战推进（秦攻 +，楚守 −；账本在秦行）
+    // 会战推进（秦攻 +，楚守 −；三节点依次攻防，账本在秦行）
     let warNote = '';
     if(task.war_side && warState && warState.active){
       const delta = task.war_side==='attack' ? amt : -amt;
       const q = await loadNation('qin');
-      const np = Math.max(0, Math.min(100, (q.war_progress||50) + delta));
-      await cloud.database.from('nations').update({war_progress:np, updated_at:new Date().toISOString()}).eq('id',q.id);
-      warState.progress = np;
-      warNote = np>=100?'，战线推进至敌境！':(np<=0?'，战线危殆！':'，战线'+(delta>0?'推进':'固守'));
-      if(np>=100 || np<=0){ const res = await settleWar(np>=100?'qin_win':'chu_win'); if(res) toast(`会战终局：${res.title}`); }
+      let np = (q.war_progress||0) + delta;
+      let node = q.war_node||0;
+      if(np>=100 && task.war_side==='attack'){
+        // 攻陷当前节点
+        const fallen = WAR_NODES[node]||'边城';
+        if(node>=2){ // 王都陷落 → 秦大胜
+          await cloud.database.from('nations').update({war_progress:100, war_node:2, updated_at:new Date().toISOString()}).eq('id',q.id);
+          warState.progress=100; warState.node=2;
+          const res = await settleWar('qin_win'); if(res) toast(`会战终局：${res.title}`);
+          np = 100;
+        }else{
+          // 攻方小赚、守方失血
+          const clamp = v => Math.max(5,Math.min(100,v));
+          const nextNode = node+1;
+          await cloud.database.from('nations').update({military:clamp((q.military||0)+4), economy:clamp((q.economy||0)+2), war_node:nextNode, war_progress:0, updated_at:new Date().toISOString()}).eq('id',q.id);
+          const c = await loadNation('chu');
+          if(c) await cloud.database.from('nations').update({economy:clamp((c.economy||0)-4), livelihood:clamp((c.livelihood||0)-2), last_event:JSON.stringify({xun:nation.xun, title:fallen+'陷落', desc:'秦军攻克'+fallen+'，楚军退守'+WAR_NODES[nextNode]+'。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',c.id);
+          np = 0;
+          warState.node = nextNode;
+          toast(`⚔ ${fallen}陷落！秦军兵锋直指${WAR_NODES[nextNode]}`);
+          if(player.nation_key==='qin'){ nation = {...nation, military:Math.min(100,(nation.military||0)+4), economy:Math.min(100,(nation.economy||0)+2)}; }
+        }
+      }else{
+        np = Math.max(0, Math.min(100, np));
+        await cloud.database.from('nations').update({war_progress:np, updated_at:new Date().toISOString()}).eq('id',q.id);
+        warState.progress = np; warState.node = node;
+        warNote = task.war_side==='attack' ? '，攻势推进' : '，守御奏效';
+      }
     }
     // 国力更新
     const { data:upd, error:e1 } = await cloud.database.from('nations')
@@ -500,6 +680,11 @@ async function nextXun(){
     if(e1) throw e1;
     nation = nu[0];
     try{ memoChoices = JSON.parse(localStorage.getItem('lgc_memo_'+player.token)||'[]'); }catch(e){ memoChoices = []; } // 上书影响新旬
+    if(nation.xun > SEASON_LEN){
+      const res = await seasonSettle();
+      if(res) toast('📜 本季史书已修成——列国重开新季');
+      nation = await loadNation(player.nation_key);
+    }
     await maybeStartWar();
     await loadWarState();
     await ensureDecree();
@@ -645,28 +830,62 @@ function renderWho(){
     <span class="rank-pill">${r.n}</span>
     <small style="margin-left:8px">声望 ${player.prestige}${nx?`（${nx.n} 还差 ${nx.v-player.prestige}）`:'（已至顶峰）'}</small>`;
 }
+async function renderFang(){
+  const f = parseFang(nation);
+  const lineDef = FANG.find(x=>x.k===f.line)||FANG[0];
+  let acted = [];
+  try{ acted = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','fanglue')); }catch(e){}
+  const dots = Array.from({length:FANG_CELLS},(_,i)=> i<f.lv?'●':'○').join('');
+  const doneNames = (f.done||[]).map(k=>(FANG.find(x=>x.k===k)||{}).n).join('、')||'尚无';
+  $('fangBox').innerHTML = `
+    <div style="margin-top:12px;border-top:1px dashed #2c2418;padding-top:10px">
+      <div style="font-size:12px;color:var(--ink-dim);letter-spacing:.2em;margin-bottom:6px">国 家 方 略（长期研究线 · 全国共享收益）</div>
+      <div class="war-state">【${lineDef.n}】 ${dots} 第 ${f.lv}/${FANG_CELLS} 格 —— 每格对应国力+2，功成再加5。已成线：${doneNames}</div>
+      <button class="minor" id="btnFang" ${acted.length?'disabled':''} style="margin-top:6px">${acted.length?'本旬已推行方略':'推行方略（声望+3）'}</button>
+    </div>`;
+  const b=$('btnFang'); if(b) b.onclick=pushFanglue;
+}
 async function renderNews(){
   let rows = [];
   try{ rows = await dbRead('nations', q=>q.order('id')); }catch(e){ return; }
   const qinRow = rows.find(r=>r.nation_key==='qin');
   let warHtml = '';
   if(qinRow && qinRow.war_active){
-    const p = qinRow.war_progress||50;
+    const p = qinRow.war_progress||0;
+    const node = qinRow.war_node||0;
+    const nodeChips = WAR_NODES.map((n,i)=> i<node?`✅${n}`:(i===node?`⚔<b>${n}</b>`:n)).join(' → ');
     warHtml = `
-      <div class="war-state">⚔ 秦楚会战进行中 · 始于第${qinRow.war_xun}旬 ${player.nation_key==='qin'?'（我军攻势）':(player.nation_key==='chu'?'（我军守御）':'（齐当观变谋利）')}</div>
+      <div class="war-state">⚔ 秦楚会战进行中 · 始于第${qinRow.war_xun}旬 · 攻至：${nodeChips} ${player.nation_key==='qin'?'（我军攻势）':(player.nation_key==='chu'?'（我军守御）':'（齐当观变谋利）')}</div>
       <div class="warbar"><div class="fill-q" style="width:${p}%"></div><div class="fill-c" style="width:${100-p}%"></div></div>
-      <div class="war-labels"><span>楚军守御（0）</span><span>${p}</span><span>秦军攻势（100）</span></div>
-      ${player.nation_key!=='qi'?'<div class="hint">完成带战旗标记的任务即推进/守住战线；进度到头即分胜负。</div>':'<div class="hint">两国交兵，商路正旺——安心发展即是渔翁。</div>'}`;
+      <div class="war-labels"><span>楚军守御（0）</span><span>${p}</span><span>攻陷${WAR_NODES[node]}（100）</span></div>
+      ${player.nation_key!=='qi'?'<div class="hint">完成带战旗标记的任务即推进/守住战线；三城依次攻防，王都陷落即分胜负。</div>':'<div class="hint">两国交兵，商路正旺——安心发展即是渔翁。</div>'}`;
   }
+  // 邦交
+  let dipHtml = '';
+  const ri = rankIdxOf(player.prestige);
+  try{
+    const d = await loadDiplo();
+    dipHtml = `<div class="logline"><span class="x">邦交</span>${Object.entries(d).map(([k,v])=>`${k.replace('-','与')}<b style="color:${v<0?'var(--red)':'var(--green)'}">${relName(v)}</b>（${v}）`).join('　')}${ri>=4?'　<button class="minor" id="btnMediate">斡旋（大夫之礼）</button>':''}</div>`;
+  }catch(e){}
+  // 本季史书
+  let histHtml = '';
+  try{
+    const h = await dbRead('decrees', q=>q.eq('nation_key','tianxia').order('created_at',{ascending:false}).limit(1));
+    if(h&&h[0]){
+      const j = JSON.parse(h[0].content);
+      histHtml = `<div class="event-card" style="border-style:solid"><span class="et">太史令曰</span><span class="ed">${esc(j.history)}<br><small style="color:var(--bronze)">${esc(j.ranking||'')}</small></span></div>`;
+    }
+  }catch(e){}
   const newsHtml = rows.map(r=>{
     let ev=''; try{ ev = r.last_event?JSON.parse(r.last_event):null; }catch(e){}
     const evTxt = ev ? ` · ${esc(ev.title)}` : '';
     const warFlag = r.war_active?' <span class="war-flag">⚔会战中</span>':'';
     return `<div class="logline"><span class="x">${NATION_META[r.nation_key].n}国</span>第${r.xun}旬${warFlag}${evTxt}</div>`;
   }).join('');
-  $('newsBox').innerHTML = warHtml + newsHtml;
+  $('newsBox').innerHTML = warHtml + dipHtml + histHtml + newsHtml;
+  const bm = $('btnMediate'); if(bm) bm.onclick = mediate;
 }
-function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderLog(); renderNews(); }
+function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderLog(); renderNews(); renderFang(); }
 
 /* ============ 开局 ============ */
 let selNation = null;
