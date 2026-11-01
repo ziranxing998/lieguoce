@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>列国策 · 试玩版</title>
+<script src="https://cdn.jsdelivr.net/npm/@tencent-ai/workbuddy-cloud-sdk@dev/lib/index.global.js"></script>
+<style>
+  :root{
+    --bg:#14110d; --panel:#1e1913; --panel2:#26201750; --bronze:#b08d57; --bronze-l:#d4b483;
+    --ink:#e8dcc8; --ink-dim:#9c8f78; --seal:#a63c2a; --green:#5f8a5a; --red:#b0503c;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:var(--bg);color:var(--ink);font-family:"Noto Serif SC","STSong","SimSun",serif;
+    background-image:radial-gradient(ellipse at 50% -10%, #2a2218 0%, var(--bg) 60%);min-height:100vh;}
+  .wrap{max-width:960px;margin:0 auto;padding:16px;}
+  h1,h2,h3{font-weight:600;letter-spacing:.12em;}
+  .panel{background:var(--panel);border:1px solid #3a2f20;border-radius:8px;padding:16px;margin-bottom:14px;
+    box-shadow:0 2px 12px #00000066;}
+  .panel-title{color:var(--bronze-l);font-size:15px;letter-spacing:.3em;border-bottom:1px solid #3a2f20;
+    padding-bottom:8px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:baseline;}
+  .panel-title small{color:var(--ink-dim);letter-spacing:.05em;font-size:12px;}
+  button{font-family:inherit;background:linear-gradient(180deg,#2c2418,#221b12);color:var(--bronze-l);
+    border:1px solid var(--bronze);border-radius:6px;padding:9px 18px;font-size:15px;cursor:pointer;
+    letter-spacing:.15em;transition:all .15s;}
+  button:hover:not(:disabled){background:var(--bronze);color:#1a140c;}
+  button:disabled{opacity:.45;cursor:not-allowed;}
+  button.minor{padding:5px 12px;font-size:13px;border-color:#5a4a32;color:var(--ink-dim);}
+  button.minor:hover:not(:disabled){color:#1a140c;}
+  /* 开局 */
+  #setup{max-width:560px;margin:8vh auto 0;text-align:center;}
+  #setup h1{font-size:34px;color:var(--bronze-l);margin-bottom:6px;letter-spacing:.35em;}
+  #setup .sub{color:var(--ink-dim);margin-bottom:30px;letter-spacing:.2em;font-size:14px;}
+  .nation-card{display:inline-block;width:160px;margin:8px;padding:18px 10px;background:var(--panel);
+    border:1px solid #3a2f20;border-radius:8px;cursor:pointer;transition:all .15s;vertical-align:top;}
+  .nation-card:hover{border-color:var(--bronze);transform:translateY(-3px);}
+  .nation-card.sel{border-color:var(--bronze-l);background:#2a2115;box-shadow:0 0 14px #b08d5733;}
+  .nation-card .n{font-size:30px;color:var(--bronze-l);}
+  .nation-card .m{color:var(--ink-dim);font-size:12px;margin:6px 0;}
+  .nation-card .p{font-size:11px;color:var(--ink-dim);line-height:1.6;text-align:left;}
+  input[type=text]{font-family:inherit;background:#0f0c08;border:1px solid #3a2f20;color:var(--ink);
+    border-radius:6px;padding:10px 14px;font-size:16px;width:240px;text-align:center;letter-spacing:.1em;}
+  input[type=text]:focus{outline:none;border-color:var(--bronze);}
+  /* 顶栏 */
+  #topbar{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;flex-wrap:wrap;gap:8px;}
+  #topbar .who{font-size:16px;color:var(--bronze-l);letter-spacing:.1em;}
+  #topbar .who small{color:var(--ink-dim);}
+  .rank-pill{display:inline-block;border:1px solid var(--bronze);color:var(--bronze-l);border-radius:12px;
+    font-size:12px;padding:2px 10px;margin-left:8px;letter-spacing:.1em;}
+  /* 国力 */
+  .dims{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;}
+  .dim .label{font-size:12px;color:var(--ink-dim);letter-spacing:.2em;margin-bottom:4px;text-align:center;}
+  .dim .bar{height:8px;background:#0f0c08;border-radius:4px;overflow:hidden;border:1px solid #3a2f20;}
+  .dim .fill{height:100%;background:linear-gradient(90deg,#6e5636,var(--bronze-l));transition:width .6s;}
+  .dim .val{text-align:center;font-size:12px;color:var(--bronze-l);margin-top:3px;}
+  .dim .delta{text-align:center;font-size:11px;height:14px;color:var(--green);}
+  /* 诏书 */
+  .decree{position:relative;background:linear-gradient(180deg,#241c11,#1e1810);border:1px solid #4a3a22;
+    border-radius:4px;padding:22px 20px 16px;margin-bottom:12px;}
+  .decree::before{content:"詔";position:absolute;top:-12px;right:14px;background:var(--seal);color:#f5e6d0;
+    width:38px;height:38px;border-radius:4px;display:flex;align-items:center;justify-content:center;
+    font-size:20px;box-shadow:0 2px 6px #00000088;transform:rotate(6deg);}
+  .decree .text{font-size:16px;line-height:2;letter-spacing:.06em;}
+  .decree .meta{margin-top:10px;font-size:12px;color:var(--ink-dim);display:flex;justify-content:space-between;}
+  .quote{margin-top:10px;padding:10px 14px;border-left:3px solid var(--bronze);background:#00000033;
+    font-size:14px;color:var(--bronze-l);line-height:1.8;letter-spacing:.05em;}
+  .quote b{color:var(--ink-dim);font-size:12px;letter-spacing:.25em;display:block;margin-bottom:2px;}
+  /* 任务 */
+  .task{border:1px solid #3a2f20;border-radius:8px;padding:14px;margin-bottom:10px;background:var(--panel2);}
+  .task .thead{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;}
+  .task .tname{font-size:16px;color:var(--ink);}
+  .task .tag{font-size:11px;border-radius:10px;padding:1px 8px;margin-left:8px;}
+  .tag.wen{background:#2c3a2c;color:#9dc09a;}
+  .tag.wu{background:#3a2622;color:#d49a8a;}
+  .task .tdesc{font-size:13px;color:var(--ink-dim);line-height:1.7;margin-bottom:8px;}
+  .task .choices{display:flex;gap:8px;flex-wrap:wrap;}
+  .task .result{margin-top:8px;font-size:13px;line-height:1.7;}
+  .task .result.ok{color:var(--green);}
+  .task .result.fail{color:var(--red);}
+  /* 上书 */
+  .memorial-opts{display:flex;gap:8px;flex-wrap:wrap;}
+  .memo{border:1px solid #3a2f20;border-radius:6px;padding:8px 14px;font-size:13px;cursor:pointer;color:var(--ink-dim);}
+  .memo:hover{border-color:var(--bronze);color:var(--bronze-l);}
+  .memo.sel{border-color:var(--bronze-l);color:var(--bronze-l);background:#2a2115;}
+  /* 日志 */
+  .logline{font-size:13px;color:var(--ink-dim);line-height:1.9;border-bottom:1px dashed #2c2418;padding:4px 0;}
+  .logline .x{color:var(--bronze);margin-right:6px;}
+  /* 底部 */
+  #nextbar{text-align:center;padding:8px 0 40px;}
+  #nextbar button{font-size:17px;padding:12px 34px;}
+  .hint{font-size:12px;color:var(--ink-dim);margin-top:8px;}
+  #loading{position:fixed;inset:0;background:#14110dd9;display:flex;align-items:center;justify-content:center;
+    z-index:50;flex-direction:column;gap:14px;}
+  #loading .t{color:var(--bronze-l);letter-spacing:.3em;font-size:16px;}
+  .spinner{width:34px;height:34px;border:3px solid #3a2f20;border-top-color:var(--bronze);border-radius:50%;
+    animation:spin 1s linear infinite;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2a2115;border:1px solid var(--bronze);
+    color:var(--ink);padding:10px 20px;border-radius:6px;font-size:14px;z-index:60;display:none;}
+  .glow{animation:glow 1.2s ease;}
+  @keyframes glow{0%{box-shadow:0 0 0 #b08d5700;}40%{box-shadow:0 0 18px #b08d5788;}100%{box-shadow:0 0 0 #b08d5700;}}
+  @media (max-width:640px){.dims{grid-template-columns:repeat(3,1fr);}}
+  /* 画像 / 事件 / 会战 / 天下闻 */
+  body.setup-bg{background-image:linear-gradient(180deg,#14110dd9,#14110df2),url('assets/court.png');background-size:cover;background-attachment:fixed;}
+  #setup .map{width:100%;border-radius:8px;border:1px solid #3a2f20;margin-bottom:16px;box-shadow:0 4px 18px #00000066;}
+  .nation-card{width:160px;overflow:hidden;}
+  .nation-card img{width:100%;height:110px;object-fit:cover;border-radius:4px;margin-bottom:8px;}
+  .decree-flex{display:flex;gap:14px;align-items:flex-start;}
+  .portrait{width:78px;height:78px;border-radius:6px;border:1px solid #4a3a22;object-fit:cover;flex-shrink:0;box-shadow:0 2px 8px #00000088;}
+  .decree-flex .text-col{flex:1;min-width:0;}
+  .event-card{display:flex;gap:12px;align-items:baseline;border:1px dashed #5a4a32;border-radius:6px;padding:10px 14px;margin-bottom:10px;background:#201a10;}
+  .event-card .et{color:var(--bronze-l);font-size:14px;letter-spacing:.1em;white-space:nowrap;}
+  .event-card .ed{color:var(--ink-dim);font-size:13px;line-height:1.7;}
+  .warbar{height:14px;border-radius:7px;background:#0f0c08;border:1px solid #3a2f20;overflow:hidden;display:flex;margin:8px 0 4px;}
+  .warbar .fill-q{background:linear-gradient(90deg,#7a3020,#c25a40);height:100%;transition:width .6s;}
+  .warbar .fill-c{background:linear-gradient(270deg,#2c4a5a,#4a7a8a);height:100%;margin-left:auto;transition:width .6s;}
+  .war-labels{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-dim);}
+  .war-state{font-size:13px;color:var(--bronze-l);letter-spacing:.05em;line-height:1.8;}
+  .war-flag{color:var(--red);}
+</style>
+</head>
+<body>
+<div id="loading" style="display:none"><div class="spinner"></div><div class="t" id="loadingText">朝 堂 肃 静</div></div>
+<div class="toast" id="toast"></div>
+
+<div id="setup" class="wrap" style="display:none">
+  <h1>列国策</h1>
+  <div class="sub">AI 执国 · 君臣共治 · 试玩版</div>
+  <img class="map" src="assets/map.png" alt="列国舆图">
+  <div class="panel">
+    <p style="margin-bottom:18px;font-size:14px;color:var(--ink-dim);line-height:2">
+      天下三分，各事其主。<br>君上乃 AI 所化，一旬一策；你以布衣之身入朝，接诏任事，立功晋身。
+    </p>
+    <input type="text" id="playerName" maxlength="8" placeholder="字号（如：无忌）">
+    <div style="margin:20px 0 8px;color:var(--bronze-l);letter-spacing:.2em;font-size:14px">—— 择 木 而 栖 ——</div>
+    <div id="nationCards"></div>
+    <div style="margin-top:20px"><button id="btnStart" disabled>入 朝 为 士</button></div>
+    <div class="hint">择国后不可反悔（游士择木而栖，试玩版暂不开放转投他国）</div>
+  </div>
+</div>
+
+<div id="game" class="wrap" style="display:none">
+  <div id="topbar">
+    <div class="who" id="who"></div>
+    <div><button class="minor" id="btnReset" style="border-color:#5a3228;color:#a3705e">弃官重修</button></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>国 力 五 维</span><small id="xunLabel"></small></div>
+    <div class="dims" id="dims"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>朝 堂 · 国 策 诏</span><small id="decreeMeta"></small></div>
+    <div id="decreeBox"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>任 事</span><small>选一种做法去办差 · 办差影响国力与你的声望</small></div>
+    <div id="taskBox"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>上 书</span><small>你的建议会左右君上下旬的方略</small></div>
+    <div class="memorial-opts" id="memoBox"></div>
+    <div class="hint" id="memoHint">择一而奏。旬末上书最有效。</div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>天 下 闻</span><small>列国动向 · 战事 · 近期大事</small></div>
+    <div id="newsBox"></div>
+  </div>
+  <div class="panel">
+    <div class="panel-title"><span>居 官 履 历</span></div>
+    <div id="logBox"></div>
+  </div>
+  <div id="nextbar">
+    <button id="btnNext">进 入 下 一 旬</button>
+    <div class="hint">一旬之内把差事办完；进旬后君上会重新定策。</div>
+  </div>
+</div>
+
+<script>
+/* ============ 初始化 ============ */
+const PUBLIC_CONFIG = {
+  endpoint: 'https://liguoce-trial.app.workbuddy.host',
+  oauthRelayBaseUrl: 'https://www.workbuddy.cn/v2/as/genie-baas/oauth',
+  publishableKey: 'wbpk_QD2vZNPLPl4sr5HE2vxJaC_m3GF1JB5k4sorCwx0WwNdvqvjhQeQ2pM',
+};
+const cloud = WorkBuddyCloud.createWorkBuddyCloud({
+  endpoint: PUBLIC_CONFIG.endpoint,
+  oauthRelayBaseUrl: PUBLIC_CONFIG.oauthRelayBaseUrl,
+  publishableKey: PUBLIC_CONFIG.publishableKey,
+});
+
+const DIMS = [
+  {k:'military', n:'军事'}, {k:'economy', n:'经济'}, {k:'livelihood', n:'民生'},
+  {k:'culture', n:'文化'}, {k:'diplomacy', n:'外交'},
+];
+const RANKS = [
+  {v:0,n:'布衣'},{v:30,n:'下士'},{v:60,n:'中士'},{v:100,n:'上士'},
+  {v:150,n:'下大夫'},{v:220,n:'中大夫'},{v:300,n:'上大夫'},{v:400,n:'上卿'},
+];
+const MEMORIALS = [
+  {k:'economy', t:'富国', d:'倡市易、通商路，劝君重商贾'},
+  {k:'military', t:'强兵', d:'陈利害，劝君练甲兵、修武备'},
+  {k:'livelihood', t:'安民', d:'请轻徭薄赋，劝君先安黎庶'},
+  {k:'culture', t:'修文', d:'请兴学宫、延揽四方之士'},
+  {k:'diplomacy', t:'结交', d:'请遣使聘问，与诸侯修好'},
+];
+const NATION_META = {
+  qin:{n:'秦', m:'嬴政·稷', img:'assets/qin.png', p:'法术势之君：冷酷高效，赏罚分明，说话简短锋利。'},
+  qi:{n:'齐', m:'田衍', img:'assets/qi.png', p:'稷下之君：幽默健谈爱辩论，重文教商业。'},
+  chu:{n:'楚', m:'熊章', img:'assets/chu.png', p:'浪漫扩张之君：野心大耐心差，说话气势磅礴。'},
+};
+const EVENTS = [
+  {title:'风调雨顺', desc:'今岁大熟，仓廪充实，民有喜色。', dim:'livelihood', amount:4},
+  {title:'商路畅达', desc:'关市云集四方商旅，税入倍增。', dim:'economy', amount:4},
+  {title:'游士来投', desc:'四方之士闻国家求贤，接踵而至。', dim:'culture', amount:3},
+  {title:'边关小捷', desc:'斥候巡边小胜，军中士气可用。', dim:'military', amount:3},
+  {title:'邻使来聘', desc:'他国遣使修好，呈上国书礼品。', dim:'diplomacy', amount:3},
+  {title:'蝗灾过境', desc:'飞蝗蔽日，田野受灾，民有饥色。', dim:'livelihood', amount:-4},
+  {title:'币制紊乱', desc:'私钱横行于市，物价腾贵。', dim:'economy', amount:-3},
+  {title:'边民内附', desc:'邻国流民涌入边境，需善加安置。', dim:'livelihood', amount:-3},
+];
+
+let player = null;      // {token,name,nation_key,prestige}
+let nation = null;      // 行数据
+let decree = null;      // 本旬诏书
+let tasks = [];         // 本旬任务
+let memoChoice = null;
+let llmReady = true;
+let busy = false;
+let warState = null;    // {active, progress, warXun}（以秦行为账本）
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s??'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.style.display='block'; setTimeout(()=>t.style.display='none',2600); }
+function showLoading(text){ $('loadingText').textContent = text||'朝 堂 肃 静'; $('loading').style.display='flex'; }
+function hideLoading(){ $('loading').style.display='none'; }
+function rankOf(p){ let r=RANKS[0]; for(const x of RANKS){ if(p>=x.v) r=x; } return r; }
+function nextRankOf(p){ for(const x of RANKS){ if(p<x.v) return x; } return null; }
+
+/* ============ 数据层 ============ */
+async function dbRead(table, fn){
+  let q = cloud.database.from(table);
+  const { data, error } = await (fn?fn(q):q);
+  if(error) throw error;
+  return data;
+}
+function guestToken(){
+  let t = localStorage.getItem('lgc_token');
+  if(!t){ t = 'g_'+Math.random().toString(36).slice(2)+Date.now().toString(36); localStorage.setItem('lgc_token',t); }
+  return t;
+}
+async function loadPlayer(){
+  const rows = await dbRead('players', q=>q.eq('token', guestToken()).limit(1));
+  return rows[0]||null;
+}
+async function loadNation(key){
+  const rows = await dbRead('nations', q=>q.eq('nation_key', key).limit(1));
+  return rows[0]||null;
+}
+async function loadDecree(nationKey, xun){
+  const rows = await dbRead('decrees', q=>q.eq('nation_key',nationKey).eq('xun',xun).order('created_at',{ascending:false}).limit(1));
+  return rows[0]||null;
+}
+async function loadMyActions(xun){
+  return await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',xun).order('created_at',{ascending:true}));
+}
+
+/* ============ AI 君主 ============ */
+async function listModel(){
+  try{
+    const models = await cloud.llm.models.list();
+    return models.find(m=>m.id==='glm-5.3-flash'&&m.disabled!==true)
+        || models.find(m=>m.disabled!==true)||null;
+  }catch(e){ return null; }
+}
+let modelId = undefined; // 惰性获取
+async function llmDecree(nat, actions, memo){
+  if(!llmReady) return null;
+  try{
+    if(modelId===undefined) modelId = await listModel();
+    if(!modelId){ llmReady=false; return null; }
+    const meta = NATION_META[nat.nation_key];
+    const snapshot = {}; for(const d of DIMS) snapshot[d.n]=nat[d.k];
+    const actSummary = actions.length? actions.map(a=>`${a.note}（${(DIMS.find(d=>d.k===a.dim)||{}).n||'—'}+${a.amount||0}）`).join('；') : '本旬尚无臣下报事';
+    const sys = `你是先秦${meta.n}国的君主，名叫${meta.m}。人格：${meta.p} 你在一款先秦策略游戏里，每旬向臣下发一道《国策诏》。要求：诏书用先秦语气、带你的性格，正文不超过120字；君心参悟是一句简短的话，透露你真实的决策理由（不暴露数值）。必须恰好派生3个任务，type 只能是"文"或"武"。另附一件本旬发生在国内的 random 事件（好事或坏事均可，amount 在 -6 到 6 之间）。只输出 JSON，不要任何其他文字，格式：{"decree":"诏书正文","quote":"君心参悟的话","focus":"military/economy/livelihood/culture/diplomacy 之一","tasks":[{"title":"任务名","desc":"一句话描述差事","type":"文","dim":"五维之一","reward":数字(5-15)}],"event":{"title":"四字事件名","desc":"一句话描述","dim":"五维之一","amount":数字(-6到6)}}`;
+    const user = `当前国力：${JSON.stringify(snapshot)}。旬号：${nat.xun}。上旬臣下报事：${actSummary}。${memo?`有臣子上书：【${memo.t}】${memo.d}`:'本旬无上书'}。${warState&&warState.active?`【要】国家正处于会战中！战线进度${warState.progress}（100=我方大胜，0=战事不利）。诏书必须围绕战事（筹粮督饷、攻坚拔城、坚壁守御、外交斡旋等），3个任务全部与战事相关。`:''}请颁发本旬国策诏。`;
+    let answer = '';
+    for await (const chunk of cloud.llm.chat.completions.create({
+      model: modelId.id,
+      messages:[{role:'system',content:sys},{role:'user',content:user}],
+      stream:true, temperature:0.9, max_tokens:800,
+    })){ if(chunk.choices[0]?.delta?.content) answer += chunk.choices[0].delta.content; }
+    const m = answer.match(/\{[\s\S]*\}/);
+    if(!m) return null;
+    const obj = JSON.parse(m[0]);
+    if(!obj.decree || !Array.isArray(obj.tasks) || obj.tasks.length===0) return null;
+    const dimSet = new Set(DIMS.map(d=>d.k));
+    const tasks = obj.tasks.slice(0,3).map(t=>({
+      title:String(t.title||'差事').slice(0,12),
+      desc:String(t.desc||'').slice(0,60),
+      type: t.type==='武'?'武':'文',
+      dim: dimSet.has(t.dim)?t.dim:'economy',
+      reward: Math.max(3,Math.min(15,Number(t.reward)||8)),
+      war_side: warState&&warState.active ? (player.nation_key==='qin'?'attack':(player.nation_key==='chu'?'defend':null)) : null,
+    }));
+    const ev = obj.event&&dimSet.has(obj.event.dim) ? {title:String(obj.event.title||'时局').slice(0,8), desc:String(obj.event.desc||'').slice(0,50), dim:obj.event.dim, amount:Math.max(-6,Math.min(6,Number(obj.event.amount)||0))} : null;
+    return {content:String(obj.decree).slice(0,300), quote:String(obj.quote||'').slice(0,80), focus:dimSet.has(obj.focus)?obj.focus:null, tasks, event:ev};
+  }catch(e){ console.warn('LLM fail', e&&e.error?e.error.code:e); return null; }
+}
+// 模板诏书（AI 不可用时的兜底）
+function templateDecreeFull(nat, memo){
+  const meta = NATION_META[nat.nation_key];
+  const warActive = !!(warState&&warState.active);
+  const focus = warActive ? 'military' : (memo? memo.k : (DIMS.reduce((a,b)=> nat[a.k]<=nat[b.k]?a:b).k));
+  let t3;
+  if(warActive && nat.nation_key==='qin'){
+    t3 = [['督办粮草','征发民夫转运军粮至前线','文','economy'],['攻坚拔城','督率前锋营冲击敌方城邑','武','military'],['夜袭敌营','遣死士夜扰敌军营地','武','military']].map((x,i)=>({title:x[0],desc:x[1],type:x[2],dim:x[3],reward:6+i*2,war_side:'attack'}));
+  }else if(warActive && nat.nation_key==='chu'){
+    t3 = [['坚壁清野','收缩城防，分毫都不给敌军留','文','economy'],['登陴守御','督率守卒轮番登城戒备','武','military'],['断敌粮道','遣轻骑袭扰敌方粮道','武','military']].map((x,i)=>({title:x[0],desc:x[1],type:x[2],dim:x[3],reward:6+i*2,war_side:'defend'}));
+  }else{
+    const pools = {
+      military:[['巡边劳军','赴边关犒赏戍卒，鼓舞士气','文'],['整饬武备','督造甲胄箭矢，清点武库','文'],['操演士卒','在校场主持一场操演','武']],
+      economy:[['整顿市易','巡查市集，平抑物价','文'],['疏浚商路','护送商队疏通商路','文'],['清点府库','核验钱粮账目，杜绝亏空','武']],
+      livelihood:[['劝课农桑','下乡劝农，督修沟渠','文'],['开仓赈济','查验义仓，赈济贫户','文'],['修桥补路','督修境内道路桥梁','武']],
+      culture:[['讲学论道','在学宫主持一场讲学','文'],['访求遗书','寻访散佚典籍，整理入藏','文'],['礼贤下士','接待来访的游士','文']],
+      diplomacy:[['款待使者','接待他国来使，探其口风','文'],['修书聘问','代君主起草致诸侯的国书','文'],['细作密报','核实边关细作传回的消息','武']],
+    };
+    t3 = pools[focus].slice(0,3).map((x,i)=>({title:x[0],desc:x[1],type:x[2],dim:focus,reward:6+i*2}));
+  }
+  const dimName = DIMS.find(d=>d.k===focus).n;
+  const voice = {
+    qin:`法者，治之端也。今观国势，${dimName}为急。凡我臣工，其各效乃力，毋旷乃职。`,
+    qi:`寡人尝闻稷下先生之言：国之大务，在因时制宜。今${dimName}之事亟矣，诸君其勉之，寡人不吝封赏！`,
+    chu:`嗟乎！大楚之业，当绍先君之鸿志。今${dimName}为先务，诸卿其佐寡人，共图大计！`,
+  };
+  const warVoice = {
+    qin:`兵者，国之大事。今王师已出，将士用命。凡我臣工，转运粮秣、攻城拔寨，毋令寡人失望！`,
+    qi:`诸侯交兵，齐当自保而观变。商路不可断，武备不可弛。诸君各安其业，寡人自有计较。`,
+    chu:`秦师压境，是可忍孰不可忍！凡我楚人，同仇敌忾。守土之功，寡人重赏不吝！`,
+  };
+  const quoteV = {
+    qin:'臣工效力，国乃强。赏罚，寡人不虚发。',
+    qi:'上书者，寡人之耳目也。取其善者而行之。',
+    chu:'寡人之志，岂止于此！',
+  };
+  const ev = {...EVENTS[Math.floor(Math.random()*EVENTS.length)]};
+  return {
+    content: warActive? warVoice[meta?nat.nation_key:'qin'] : voice[meta?nat.nation_key:'qin'],
+    quote: memo? `既有【${memo.t}】之奏，寡人思之再三，其言可用。` : (warActive?'胜负之数，在粮秣与人心。':quoteV[meta?nat.nation_key:'qin']),
+    focus, tasks:t3, event:ev,
+  };
+}
+
+async function ensureDecree(){
+  let d = await loadDecree(player.nation_key, nation.xun);
+  if(d){
+    decree = d;
+    try{ const j = JSON.parse(d.content); if(j.tasks){ tasks=j.tasks; decree.text=j.decree||j.content; } }
+    catch(e){ decree.text=d.content; }
+    if(!tasks){ // 老格式或模板兜底
+      const t = templateDecreeFull(nation, null);
+      tasks = t.tasks; decree.text = d.content; decree.quote = decree.quote || t.quote;
+    }
+    return;
+  }
+  // 本旬尚无诏书 → 生成（AI 优先，模板兜底）
+  const memo = memoChoice ? MEMORIALS.find(m=>m.k===memoChoice) : null;
+  let prevActions = [];
+  try{ prevActions = await dbRead('player_actions', q=>q.eq('nation_key',player.nation_key).eq('xun', nation.xun-1).order('created_at',{ascending:true}).limit(30)); }catch(e){}
+  let gen = await llmDecree(nation, prevActions, memo);
+  let source = 'llm';
+  if(!gen){ gen = templateDecreeFull(nation, memo); source='template'; }
+  const payload = JSON.stringify({decree:gen.content, quote:gen.quote, focus:gen.focus, tasks:gen.tasks, event:gen.event||null});
+  const { data, error } = await cloud.database.from('decrees').insert({
+    nation_key:player.nation_key, xun:nation.xun, content:payload, quote:gen.quote, focus_dim:gen.focus, source,
+  }).select();
+  if(error){ toast('诏书生成失败：'+error.message); return; }
+  decree = data[0]; decree.text = gen.content; tasks = gen.tasks;
+  // 本旬事件结算（只有生成者执行一次，世界共享）
+  if(gen.event){
+    const amt = gen.event.amount||0;
+    const newV = Math.max(5,Math.min(100,(nation[gen.event.dim]||0)+amt));
+    const { data:eu } = await cloud.database.from('nations').update({
+      [gen.event.dim]:newV, last_event:JSON.stringify({xun:nation.xun, title:gen.event.title, desc:gen.event.desc, amount:amt, dim:gen.event.dim}),
+      updated_at:new Date().toISOString(),
+    }).eq('id',nation.id).select();
+    if(eu&&eu[0]) nation = eu[0];
+  }
+}
+
+/* ============ 会战（以秦行为账本，秦攻楚守） ============ */
+async function loadWarState(){
+  const q = await loadNation('qin');
+  if(q && q.war_active){
+    warState = {active:true, progress:q.war_progress, warXun:q.war_xun};
+    // 超 3 旬强制结算
+    if(nation.xun - q.war_xun >= 3) await settleWar(q.war_progress>=60?'qin_win':(q.war_progress<=40?'chu_win':'stale'));
+  }else warState = {active:false, progress:50, warXun:0};
+}
+async function maybeStartWar(){
+  if(nation.xun>1 && nation.xun%3===1 && !(warState&&warState.active)){
+    const q = await loadNation('qin');
+    if(q && !q.war_active){
+      const { data } = await cloud.database.from('nations').update({war_active:true, war_progress:50, war_xun:nation.xun, updated_at:new Date().toISOString()}).eq('id',q.id).select();
+      if(data&&data[0]) warState = {active:true, progress:50, warXun:nation.xun};
+    }
+  }
+}
+async function settleWar(result){
+  const q = await loadNation('qin'); const c = await loadNation('chu');
+  if(!q||!c) return;
+  const dq={}, dc={};
+  let title, desc;
+  if(result==='qin_win'){ dq.military=8; dq.economy=5; dc.economy=-8; dc.livelihood=-5; title='秦师大胜'; desc='秦军攻克楚地城邑，楚国被迫割地请和。'; }
+  else if(result==='chu_win'){ dc.military=8; dq.diplomacy=-5; dq.economy=-3; title='楚军守成'; desc='楚军坚壁清野，秦师粮尽而返。'; }
+  else { dq.military=2; dc.military=2; title='会战相持'; desc='秦楚鏖战不下，各自罢兵休整。'; }
+  const clamp = v => Math.max(5,Math.min(100,v));
+  const updQ = {war_active:false, war_progress:50, updated_at:new Date().toISOString(), last_event:JSON.stringify({xun:nation.xun, title, desc, amount:0, dim:null})};
+  for(const [k,v] of Object.entries(dq)) updQ[k]=clamp((q[k]||0)+v);
+  const updC = {updated_at:new Date().toISOString(), last_event:JSON.stringify({xun:nation.xun, title, desc, amount:0, dim:null})};
+  for(const [k,v] of Object.entries(dc)) updC[k]=clamp((c[k]||0)+v);
+  await cloud.database.from('nations').update(updQ).eq('id',q.id);
+  await cloud.database.from('nations').update(updC).eq('id',c.id);
+  warState = {active:false, progress:50, warXun:0};
+  if(player.nation_key==='qin') nation = {...nation, ...updQ};
+  if(player.nation_key==='chu') nation = {...nation, ...updC};
+  return {title, desc};
+}
+
+/* ============ 交互 ============ */
+async function completeTask(task, choiceIdx){
+  if(busy) return; busy = true; showLoading('办 差 中');
+  try{
+    const roll = Math.random();
+    const ok = roll < 0.78;
+    const amt = ok ? task.reward : Math.ceil(task.reward*0.4);
+    const dimKey = task.dim;
+    // 会战推进（秦攻 +，楚守 −；账本在秦行）
+    let warNote = '';
+    if(task.war_side && warState && warState.active){
+      const delta = task.war_side==='attack' ? amt : -amt;
+      const q = await loadNation('qin');
+      const np = Math.max(0, Math.min(100, (q.war_progress||50) + delta));
+      await cloud.database.from('nations').update({war_progress:np, updated_at:new Date().toISOString()}).eq('id',q.id);
+      warState.progress = np;
+      warNote = np>=100?'，战线推进至敌境！':(np<=0?'，战线危殆！':'，战线'+(delta>0?'推进':'固守'));
+      if(np>=100 || np<=0){ const res = await settleWar(np>=100?'qin_win':'chu_win'); if(res) toast(`会战终局：${res.title}`); }
+    }
+    // 国力更新
+    const { data:upd, error:e1 } = await cloud.database.from('nations')
+      .update({ [dimKey]: Math.min(100, (nation[dimKey]||0)+amt), updated_at:new Date().toISOString() })
+      .eq('id', nation.id).select();
+    if(e1) throw e1;
+    nation = upd[0];
+    // 声望更新
+    const gain = ok ? task.reward : Math.ceil(task.reward/2);
+    const { data:pu, error:e2 } = await cloud.database.from('players')
+      .update({ prestige: (player.prestige||0)+gain }).eq('id', player.id).select();
+    if(e2) throw e2;
+    const oldRank = rankOf(player.prestige).n;
+    player = pu[0];
+    const newRank = rankOf(player.prestige).n;
+    // 行为记录
+    await cloud.database.from('player_actions').insert({
+      token:player.token, nation_key:player.nation_key, xun:nation.xun,
+      action_type:'task', dim:dimKey, amount:amt,
+      note:`${task.title}·${choiceIdx===0?'尽心办':'取巧办'}${ok?'·成':'·失'}${warNote}`,
+    });
+    // 标记任务完成（本地）
+    task.done = true; task.result = {ok, amt, gain};
+    renderAll();
+    if(newRank!==oldRank){ toast(`官升一级：${newRank}！`); $('dims').classList.add('glow'); setTimeout(()=>$('dims').classList.remove('glow'),1300); }
+  }catch(e){ toast('办差失败：'+(e.message||'未知错误')); }
+  hideLoading(); busy = false;
+}
+
+async function nextXun(){
+  if(busy) return; busy = true;
+  showLoading('君 上 定 策');
+  try{
+    // 旬 +1
+    const { data:nu, error:e1 } = await cloud.database.from('nations')
+      .update({ xun: nation.xun+1, updated_at:new Date().toISOString() }).eq('id', nation.id).select();
+    if(e1) throw e1;
+    nation = nu[0];
+    memoChoice = localStorage.getItem('lgc_memo_'+player.token); // 上书影响新旬
+    await maybeStartWar();
+    await loadWarState();
+    await ensureDecree();
+    renderAll();
+    toast(`第${nation.xun}旬 · ${decree.source==='llm'?'君上手书':'廷臣代草'}`);
+  }catch(e){ toast('进旬失败：'+(e.message||'未知错误')); }
+  hideLoading(); busy = false;
+}
+
+async function pickMemo(k){
+  memoChoice = k;
+  localStorage.setItem('lgc_memo_'+player.token, k);
+  await cloud.database.from('player_actions').insert({
+    token:player.token, nation_key:player.nation_key, xun:nation.xun,
+    action_type:'memorial', dim:k, amount:0, note:`上书【${MEMORIALS.find(m=>m.k===k).t}】`,
+  });
+  renderMemo();
+  toast('上书已呈君前，下旬定策时君上会参考');
+}
+
+async function resetGame(){
+  if(!confirm('弃官重修将清除本机进度（国家级世界状态保留），确定？')) return;
+  localStorage.removeItem('lgc_token');
+  localStorage.removeItem('lgc_memo_'+player.token);
+  location.reload();
+}
+
+/* ============ 渲染 ============ */
+function renderDims(){
+  $('xunLabel').textContent = `第 ${nation.xun} 旬`;
+  $('dims').innerHTML = DIMS.map(d=>{
+    const v = nation[d.k]||0;
+    return `<div class="dim"><div class="label">${d.n}</div>
+      <div class="bar"><div class="fill" style="width:${v}%"></div></div>
+      <div class="val">${v}</div></div>`;
+  }).join('');
+}
+function renderDecree(){
+  $('decreeMeta').textContent = decree.source==='llm' ? 'AI 君主亲笔' : '廷臣代草（AI 暂离）';
+  let evHtml = '';
+  try{
+    const ev = nation.last_event?JSON.parse(nation.last_event):null;
+    if(ev && ev.xun===nation.xun){
+      evHtml = `<div class="event-card"><span class="et">${esc(ev.title)}</span><span class="ed">${esc(ev.desc)}</span></div>`;
+    }
+  }catch(e){}
+  $('decreeBox').innerHTML = `${evHtml}
+    <div class="decree">
+      <div class="decree-flex">
+        <img class="portrait" src="${NATION_META[player.nation_key].img}" alt="君上">
+        <div class="text-col">
+          <div class="text">${esc(decree.text||'')}</div>
+          ${decree.quote?`<div class="quote"><b>君 心 参 悟</b>${esc(decree.quote)}</div>`:''}
+        </div>
+      </div>
+    </div>`;
+}
+function renderTasks(){
+  $('taskBox').innerHTML = tasks.map((t,i)=>{
+    const opt = t.choices || [{c:'尽心办'},{c:'取巧办，省力而功半'}];
+    return `<div class="task">
+      <div class="thead"><span><span class="tname">${t.war_side?'⚔ ':''}${esc(t.title)}</span>
+        <span class="tag ${t.type==='武'?'wu':'wen'}">${t.type==='武'?'武事':'文事'}</span></span>
+        <small style="color:var(--ink-dim)">宜利：${DIMS.find(d=>d.k===t.dim).n}+${t.reward}${t.war_side?(t.war_side==='attack'?' · 推进战线':' · 守住战线'):''}</small></div>
+      <div class="tdesc">${esc(t.desc)}</div>
+      ${t.done
+        ? `<div class="result ${t.result.ok?'ok':'fail'}">${t.result.ok?'事成':'事有蹉跎'} —— 国力+${t.result.amt}，声望+${t.result.gain}</div>`
+        : `<div class="choices">${opt.map((o,ci)=>`<button class="minor" data-task="${i}" data-choice="${ci}">${o.c}</button>`).join('')}</div>`}
+    </div>`;
+  }).join('');
+  $('taskBox').querySelectorAll('button[data-task]').forEach(b=>{
+    b.onclick = ()=> completeTask(tasks[+b.dataset.task], +b.dataset.choice);
+  });
+}
+function renderMemo(){
+  $('memoBox').innerHTML = MEMORIALS.map(m=>
+    `<span class="memo ${memoChoice===m.k?'sel':''}" data-m="${m.k}" title="${esc(m.d)}">【${m.t}】${esc(m.d)}</span>`).join('');
+  $('memoBox').querySelectorAll('.memo').forEach(el=>{
+    el.onclick = ()=> pickMemo(el.dataset.m);
+  });
+  $('memoHint').textContent = memoChoice
+    ? `已上书【${MEMORIALS.find(m=>m.k===memoChoice).t}】—— 进入下一旬时君上将参酌此奏`
+    : '择一而奏。旬末上书最有效。';
+}
+async function renderLog(){
+  const rows = await dbRead('player_actions', q=>q.eq('token',player.token).order('created_at',{ascending:false}).limit(12));
+  $('logBox').innerHTML = rows.length? rows.map(r=>
+    `<div class="logline"><span class="x">第${r.xun}旬</span>${esc(r.note||'')}${r.amount?`（${DIMS.find(d=>d.k===r.dim)?.n||''}+${r.amount}）`:''}</div>`
+  ).join('') : '<div class="logline">初入朝堂，尚无事迹。</div>';
+}
+function renderWho(){
+  const r = rankOf(player.prestige); const nx = nextRankOf(player.prestige);
+  $('who').innerHTML = `${esc(player.name)} · ${NATION_META[player.nation_key].n}国
+    <span class="rank-pill">${r.n}</span>
+    <small style="margin-left:8px">声望 ${player.prestige}${nx?`（${nx.n} 还差 ${nx.v-player.prestige}）`:'（已至顶峰）'}</small>`;
+}
+async function renderNews(){
+  let rows = [];
+  try{ rows = await dbRead('nations', q=>q.order('id')); }catch(e){ return; }
+  const qinRow = rows.find(r=>r.nation_key==='qin');
+  let warHtml = '';
+  if(qinRow && qinRow.war_active){
+    const p = qinRow.war_progress||50;
+    warHtml = `
+      <div class="war-state">⚔ 秦楚会战进行中 · 始于第${qinRow.war_xun}旬 ${player.nation_key==='qin'?'（我军攻势）':(player.nation_key==='chu'?'（我军守御）':'（齐当观变谋利）')}</div>
+      <div class="warbar"><div class="fill-q" style="width:${p}%"></div><div class="fill-c" style="width:${100-p}%"></div></div>
+      <div class="war-labels"><span>楚军守御（0）</span><span>${p}</span><span>秦军攻势（100）</span></div>
+      ${player.nation_key!=='qi'?'<div class="hint">完成带战旗标记的任务即推进/守住战线；进度到头即分胜负。</div>':'<div class="hint">两国交兵，商路正旺——安心发展即是渔翁。</div>'}`;
+  }
+  const newsHtml = rows.map(r=>{
+    let ev=''; try{ ev = r.last_event?JSON.parse(r.last_event):null; }catch(e){}
+    const evTxt = ev ? ` · ${esc(ev.title)}` : '';
+    const warFlag = r.war_active?' <span class="war-flag">⚔会战中</span>':'';
+    return `<div class="logline"><span class="x">${NATION_META[r.nation_key].n}国</span>第${r.xun}旬${warFlag}${evTxt}</div>`;
+  }).join('');
+  $('newsBox').innerHTML = warHtml + newsHtml;
+}
+function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderLog(); renderNews(); }
+
+/* ============ 开局 ============ */
+let selNation = null;
+function renderSetup(){
+  $('nationCards').innerHTML = Object.entries(NATION_META).map(([k,v])=>
+    `<div class="nation-card ${selNation===k?'sel':''}" data-k="${k}">
+      <img src="${v.img}" alt="${v.n}君">
+      <div class="n">${v.n}</div><div class="m">君上：${v.m}</div><div class="p">${v.p}</div>
+    </div>`).join('');
+  $('nationCards').querySelectorAll('.nation-card').forEach(el=>{
+    el.onclick = ()=>{ selNation = el.dataset.k; $('btnStart').disabled = false; renderSetup(); };
+  });
+}
+async function startGame(){
+  const name = $('playerName').value.trim() || '无名之士';
+  if(!selNation){ toast('请先择国'); return; }
+  showLoading('入 朝');
+  try{
+    const { data, error } = await cloud.database.from('players').insert({
+      token:guestToken(), name, nation_key:selNation, prestige:0,
+    }).select();
+    if(error) throw error;
+    player = data[0];
+    localStorage.setItem('lgc_memo_'+player.token, '');
+    document.body.classList.remove('setup-bg');
+    $('setup').style.display='none'; $('game').style.display='block';
+    await enterWorld();
+  }catch(e){ toast('入朝失败：'+(e.message||'未知错误')); }
+  hideLoading();
+}
+
+/* ============ 世界进入 ============ */
+async function enterWorld(){
+  showLoading('通 报 君 前');
+  try{
+    nation = await loadNation(player.nation_key);
+    if(!nation) throw new Error('世界状态缺失');
+    memoChoice = localStorage.getItem('lgc_memo_'+player.token) || null;
+    await loadWarState();
+    await ensureDecree();
+    renderAll();
+  }catch(e){ toast('加载失败：'+(e.message||'未知错误')); }
+  hideLoading();
+}
+
+/* ============ 启动 ============ */
+(async function boot(){
+  showLoading('开 卷');
+  try{
+    const p = await loadPlayer();
+    if(p){
+      player = p;
+      $('setup').style.display='none'; $('game').style.display='block';
+      await enterWorld();
+    }else{
+      document.body.classList.add('setup-bg');
+      renderSetup(); $('setup').style.display='block';
+      hideLoading();
+    }
+  }catch(e){
+    toast('连接云服失败，请刷新重试');
+    document.body.classList.add('setup-bg');
+    renderSetup(); $('setup').style.display='block';
+    hideLoading();
+  }
+  $('btnStart').onclick = startGame;
+  $('btnNext').onclick = nextXun;
+  $('btnReset').onclick = resetGame;
+})();
+</script>
+</body>
+</html>
