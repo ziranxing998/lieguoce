@@ -564,6 +564,7 @@ function normalizeTaskList(arr){
   }));
 }
 async function ensureDecree(){
+    if(nation && nation.annexed){ tasks=[]; var db0=$("decreeBox"); if(db0) db0.innerHTML='<div class="hint">社稷倾覆——故国无诏。立誓复国者，日夜积蓄，以待天时。</div>'; renderTasks(); return; }
   tasks = []; // S5：清残留，防跨旬脏任务
   let d = await loadDecree(player.nation_key, nation.xun);
   if(d){
@@ -654,7 +655,8 @@ async function maybeStartWar(){
     const d = await loadDiplo();
     const rows = await dbRead('nations', q=>q.order('id'));
     // 候选：关系最紧张的 4 对随机取一；攻守随机
-    const cands = Object.entries(d).filter(([k,v])=>k.includes('-') && v<10).sort((a,b)=>a[1]-b[1]).slice(0,4);
+    const fallen = new Set(rows.filter(r=>r.annexed).map(r=>r.nation_key)); // 附庸不兴兵
+    const cands = Object.entries(d).filter(([k,v])=>k.includes('-') && v<10 && !fallen.has(k.split('-')[0]) && !fallen.has(k.split('-')[1])).sort((a,b)=>a[1]-b[1]).slice(0,4);
     if(!cands.length) return;
     const [pairKey] = cands[Math.floor(Math.random()*cands.length)];
     let A = pairKey.split('-')[0], B = pairKey.split('-')[1];
@@ -709,7 +711,7 @@ async function settleWar(result){
     let dRes = {wood:0,grain:0,stone:0}; try{ dRes={...dRes, ...JSON.parse(c.resources||'{}')}; }catch(e){}
     let aRes = {wood:0,grain:0,stone:0}; try{ aRes={...aRes, ...JSON.parse(q.resources||'{}')}; }catch(e){}
     for(const k in dRes){ const loot=Math.floor((dRes[k]||0)/2); aRes[k]=(aRes[k]||0)+loot; dRes[k]-=loot; }
-    await cloud.database.from('nations').update({resources:JSON.stringify(dRes), pop:Math.max(20,Math.round((c.pop||200)*0.7)), updated_at:new Date().toISOString()}).eq('id',c.id);
+    await cloud.database.from('nations').update({resources:JSON.stringify(dRes), pop:Math.max(20,Math.round((c.pop||200)*0.7)), annexed:true, updated_at:new Date().toISOString()}).eq('id',c.id);
     await cloud.database.from('nations').update({resources:JSON.stringify(aRes), updated_at:new Date().toISOString()}).eq('id',q.id);
     if(player.nation_key===B) nation={...nation, resources:JSON.stringify(dRes), pop:Math.max(20,Math.round((nation.pop||200)*0.7))};
     if(player.nation_key===A) nation={...nation, resources:JSON.stringify(aRes)};
@@ -1063,6 +1065,15 @@ async function nextXun(){
       if(res) toast('📜 本季史书已修成——列国重开新季');
       nation = await loadNation(player.nation_key);
       memoChoices = []; // B7：跨季内存残留清理
+  // 复国：季初改朝换代，灭国尽皆光复；复国志士 +10 声望
+  try{
+    await cloud.database.from('nations').update({annexed:false, updated_at:new Date().toISOString()}).eq('annexed',true);
+    const loyalists = await dbRead('players', q=>q.eq('loyal',1));
+    for(const lp of loyalists){
+      await cloud.database.rpc('bump_prestige',{p_player:lp.id,p_delta:10});
+      await cloud.database.from('players').update({loyal:0}).eq('id',lp.id);
+    }
+  }catch(e){}
     }
     await maybeStartWar();
     await loadWarState();
@@ -1473,6 +1484,7 @@ async function enterWorld(){
   try{
     nation = await loadNation(player.nation_key);
     if(!nation) throw new Error('世界状态缺失');
+    if(nation.annexed && !player.loyal){ setTimeout(()=>{ showExileModal(); }, 900); }
     try{ memoChoices = JSON.parse(localStorage.getItem('lgc_memo_'+player.token)||'[]'); }catch(e){ memoChoices = []; }
     await loadWarState();
     await ensureDecree();
@@ -1961,7 +1973,7 @@ async function saveProj(arr){
   return false;
 }
 async function ensureProject(){
-  if(!player || spectate || !nation) return;
+  if(!player || spectate || !nation || nation.annexed) return; // 灭国后无新工事，积蓄旧力
   try{
     let arr = await loadProj();
     const act = arr.find(pr=>!pr.done);
@@ -2163,6 +2175,53 @@ async function startLabor(resource, choice){
     }
   }catch(e){ toast('服役失败：'+(e.message||'未知错误')); }
   hideLoading(); busy=false;
+}
+
+/* ============ 灭国抉择：复国或改仕 ============ */
+async function showExileModal(){
+  if($('bMask').classList.contains('on')) return;
+  const rows = await dbRead('nations', q=>q.order('id'));
+  const alive = rows.filter(r=>!r.annexed && r.nation_key!==player.nation_key);
+  const ri = rankIdxOf(player.prestige);
+  const lossPct = (ri+1)*10;
+  const keep = Math.floor(player.prestige*(1-0.1*(ri+1)));
+  $('bmTitle').textContent = '社 稷 倾 覆';
+  $('bmSub').textContent = '故国已灭 · 卿何去何从';
+  let h = '<div class="tdesc" style="margin-bottom:10px">故国宗庙已隳，君上蒙尘。卿今官居 <b>'+RANKS[ri].n+'</b>，声望 <b>'+player.prestige+'</b>。</div>';
+  h += '<div class="result ok" style="margin-bottom:12px"><b>投奔他国</b>：声望折损 '+lossPct+'%（官越高罚越重，余 '+keep+'）——择一国而仕。</div>';
+  h += '<div class="choices">'+alive.map(r0=>{
+    const m0=NATION_META[r0.nation_key];
+    const avg0=Math.round(((r0.military||40)+(r0.economy||40)+(r0.livelihood||40)+(r0.culture||40)+(r0.diplomacy||40))/5);
+    const strong0=avg0>=45?'强国':(avg0>=38?'中国':'弱邦');
+    return '<button class="minor" data-join="'+r0.nation_key+'">投奔'+m0.n+'（'+strong0+' · 人口'+(r0.pop||200)+'万）→ 声望'+keep+'</button>';
+  }).join('')+'</div>';
+  h += '<div class="result ok" style="margin:12px 0"><b>立志复国</b>：留守故土，声望无损。收集积蓄、蓄力待时；季初改朝换代时故国光复，复国志士 +10 声望。</div>';
+  h += '<div class="choices"><button class="minor" data-loyal="1" style="border-color:var(--seal);color:#d49a8a">立 誓 复 国</button></div>';
+  $('bmBody').innerHTML = h;
+  $('bmClose').style.display='none'; // 必须二选一
+  $('bMask').classList.add('on');
+  $('bmBody').querySelectorAll('button[data-join]').forEach(b0=>{ b0.onclick = async()=>{
+    try{
+      const { data:up, error:ue } = await cloud.database.from('players').update({nation_key:b0.dataset.join, prestige:keep, loyal:0}).eq('id',player.id).select();
+      if(ue) throw ue;
+      player = up && up[0];
+      toast('已改仕'+NATION_META[player.nation_key].n+'——声望折至 '+keep+'，史笔录卿改仕');
+      $('bmClose').style.display='';
+      $('bMask').classList.remove('on');
+      location.reload();
+    }catch(e){ toast('改仕失败：'+(e.message||'未知')); }
+  }; });
+  $('bmBody').querySelectorAll('button[data-loyal]').forEach(b0=>{ b0.onclick = async()=>{
+    try{
+      const { error:ue } = await cloud.database.from('players').update({loyal:1}).eq('id',player.id);
+      if(ue) throw ue;
+      player = {...player, loyal:1};
+      toast('立誓复国——声望无损。积蓄力量，以待天时！');
+      $('bmClose').style.display='';
+      $('bMask').classList.remove('on');
+      renderAll();
+    }catch(e){ toast('立誓失败：'+(e.message||'未知')); }
+  }; });
 }
 
 (async function boot(){
