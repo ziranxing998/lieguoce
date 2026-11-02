@@ -93,7 +93,7 @@
 | `entry_id` / `player_id` | string | | |
 | `source_type` | enum | `"STRATEGY_MERIT"` | STRATEGY_MERIT(策功) / DEED(事功) / WAR_MERIT(军功) / WAR_STRATEGY(军策功) / TASK(日常任务) / PENALTY(折损) / EQUILIBRIUM(遗产) |
 | `ref_id` | string | `"prop_han_x13_007"` | 回指 S2/S3 归因链 ID（可追溯，G2） |
-| `raw_score` / `weight` / `prestige_delta` | float | `42 / 1.3 / 55` | 原始记分 / 路别权重 / 换算后声望增量 |
+| `raw_score` / `weight` / `prestige_delta` | float | `42 / 1.0 / 42` | 原始记分 / 路别权重 / 换算后声望增量（REV-WRITEBACK 修订：跨文档一致性——示例权重对齐 §4.2 v0.4 权重表文路策功 w=1.0；原示例 1.3 为军策功旧值） |
 | `track` | enum | `"WEN"` | WEN(文) / WU(武) / BOTH(双修共有) |
 
 - **（REV-006 注记）`source_type` 增设 `AGENT_ASSIST`**：客卿代拟/代理（GDD-S7）产生的功过**归因玩家本人、数值零差别**，仅以该标记供审计分群与公平性带宽监控（S7 §8.1）；托管等级门槛复用散阶档位（上士/大夫/上大夫）。

@@ -81,16 +81,18 @@
   - **外交事件流**：近 2 旬他国诏令摘要、边境摩擦计数、会盟邀请状态（由外交系统推送，本系统不自行爬取）。
   - **历史引力**：当前时代命题 ID + 权重 + 距离触发的进度（GM 可调）。
 - 异常剔除：单玩家行为对"玩家倾向"的最大影响权重上限 5%（防操纵）。
+- **上书/议政案拆分口径（REV-WRITEBACK 修订：跨文档一致性，对齐 S13 §3.3 勘误）**：本层 `petition_tendency` 仅收**上书倾向票**（action_type=`memorial`）；**议政案**（action_type=`proposal`）**不入本层聚合**——经 S13 C3 呈递、S2 提案结构化后由 M3 旬决策裁决（采纳署名/驳回/存档），两通道不重复计票（S13 §6.2"唯一回流出口"口径同步）。
 
 ### 3.3 M3 旬度决策流水线
 
-每旬（现实 3 天）定时触发，批量批处理执行，七国一次跑批。流程：
+每旬（MVP-0 = 现实 **7 天**；V1 按容量档位可缩至 3 天，S11 P4 弹性参数——REV-WRITEBACK 修订：跨文档一致性，执行 S10 附录口径联动清单）定时触发，批量批处理执行，七国一次跑批。流程：
 
 1. 生成决策上下文快照（M2）。
 2. 召回记忆（M8）：恩怨账本 top-K 条目 + 上一旬决策复盘。
 3. **决策主调用**（一次 LLM 调用产出结构化 JSON）：
    - 本旬《国策诏》2-3 条国家目标（须与人格偏置 + 短板数据自洽）；
    - 本旬任务池**主推方向权衡**（任务池由规则引擎确定性生成，见 M5；LLM 输出须引用任务池 ID，不得凭空造任务）；
+   - **本旬待裁议政案裁决（REV-WRITEBACK 修订：跨文档一致性，对齐 S13 §3.3/§4.3 拆分口径）**：输入为 S13 C3 呈递的议政案池（`proposal_id` 列表 + dims_target 结构），逐案输出裁决——**采纳署名**（ADOPTED_SIGNED：入诏并绑定 goal_id，进 S2 策功归因链）/ **驳回**（REJECTED：附人格化理由语录，复用 M7 管线）/ **存档不议**（ARCHIVED）；裁决结果随本旬《国策诏》公示并回写 S13 C3 状态机（输出结构见 §4.3 `proposal_verdicts`）；
    - 内政效果指令（少量、温和的国力自愈行为，明示于诏令，见反目标 A3 约束）；
    - 上一旬决策复盘语录（连责性：须引用上旬语录中的目标，说明达成/未达成）。
 4. 输出经结构校验（JSON schema 校验失败 → 重试 1 次 → 降级为模板诏令）+ 合规过滤后发布。
@@ -110,7 +112,7 @@
   1. **规则引擎层（零 LLM）**：五维短板判定 → 人格偏置加权 → 任务模板库抽取 → 产出**结构化任务池**（确定性、可审计、数值可控）。
   2. **LLM 权衡层**：仅在任务池中做本旬**主推方向权衡**（引用任务池 ID）+《国策诏》叙事文本与语录。
 - **支柱一影响评估（结论：无损，且更稳）**：玩家感知"君主是活的"的通道是**诏令叙事、语录、任务包装语**——这些全部仍由 LLM 生成；任务数值本身从来不是玩家可感知的人格载体，且确定性数值反而保证"韩君连续两旬都推民生任务"这类行为连续性（目标 G4）不出戏。风险点在任务包装语需携带人格语气：模板库按 7 国人格 × 任务类型预写变体，M5 权衡层输出时附叙事包装语。
-- 输入：国力短板数据 + 人格偏置 + 上书倾向 +（MVP 后）摄政优先级覆盖。
+- 输入：国力短板数据 + 人格偏置 + 上书倾向 + 方略树长期修正（经 M2 快照第①层注入，改权重底数不生成任务——REV-WRITEBACK 修订：跨文档一致性，承 S2 v0.10 注记）+（MVP 后）摄政优先级覆盖。
 - 加权规则伪代码见 §4.4。
 - 红线落实：同一维度任务潮有**旬内占比上限**（默认 40%），防止任务潮过拟合单一短板 → 玩家刷单一任务 → 收益递减惩罚（与国力系统 GDD 对齐 ▲）。
 - **战时模式参数（REV-004 修订：战时模式，主理人批准）**：该国进入战争状态（S3 会战实例 DECLARED 至 SETTLED/CANCELLED）期间，任务潮单维度占比上限由 40% 提升至 **60%**（豁免范围：军事/后勤类任务），停战即恢复 40%。理由：战时全国总动员本身是单维压倒性投入的叙事常态，40% 上限会阻止"举国支前"的动员感；豁免仅限军事/后勤类，防借战时状态刷经济/民生收益。参数入 N7（S2）GM 调参清单。
@@ -191,7 +193,7 @@
 | `dim_rel_rank` | object | `{welfare: 7, ...}` | 五维在七国中的相对位次（1=最强） |
 | `shortage_flags` | array | `["welfare_CRITICAL", "economy_LOW"]` | 短板标记，三级：NORMAL(≥40) / LOW(<40) / CRITICAL(<25)——**40/25 已由 S2《国力五维》正式标定 ✔（v0.2 修订）** |
 | `task_completion_rate` | object | `{"ESCORT": 0.72, "SPY": 0.35, ...}` | 上一旬各任务类型完成率 |
-| `petition_tendency` | object | `{"TAX_REFORM": 23, "WAR_HAWK": 9, ...}` | 上书议题去重票数（单玩家旬内同议题计 1） |
+| `petition_tendency` | object | `{"TAX_REFORM": 23, "WAR_HAWK": 9, ...}` | 上书议题去重票数（单玩家旬内同议题计 1）——**仅收 memorial 倾向票，议政案 proposal 不入此字段（REV-WRITEBACK 修订：跨文档一致性，对齐 S13 §3.3）** |
 | `player_cohorts` | object | `{active_dau: 412, churn_risk: 87, new: 55}` | 活跃/流失风险/新增分群摘要 |
 | `diploma_events` | array | `[{type: "BORDER_SKIRMISH", from: "qin", count: 3, recency_d: 1}]` | 近 2 旬外交事件摘要 |
 | `gravity_state` | object | `{命题_id: "CHANGPING", weight: 0.6, progress: 0.35}` | 时代命题状态 |
@@ -213,12 +215,16 @@
     {"goal_id": "g2", "type": "LOYALTY_REINFORCE", "dim": "diplomacy",
      "narrative": "赵使许诺互市，然寡人未敢尽信", "weight": 2}
   ],
-  "task_wave_directive": {"priorities": {"welfare": 5, "economy": 2}, "quota_hint": 12},
+  "task_wave_directive": {"pool_ref": "pool_han_x14", "priorities": {"welfare": 5, "economy": 2}, "quota_hint": 12},
+  "proposal_verdicts": [{"proposal_id": "prop_han_x14_003", "verdict": "ADOPTED_SIGNED", "bound_goal": "g1"}],
   "domestic_actions": [{"action": "OPEN_GRANARY", "dim_effect": {"welfare": "+2"}, "visible_in_edict": true}],
   "retro_quote": {"ref_goal": "g1_prev", "achieved": false, "text": "上旬劝农之诏，行之未半……"},
   "judgment_basis": [{"field": "dim_trend_3d.welfare", "value": -8}]
 }
 ```
+
+- `task_wave_directive.pool_ref`：本旬任务池引用（REV-WRITEBACK 修订：跨文档一致性）——池条目 schema 见 §4.4，`ref_goal_id` 随池条目携带、随任务实例落库（S12 G1 绑定源）。
+- `proposal_verdicts`：议政案裁决输出（REV-WRITEBACK 修订：跨文档一致性）——REJECTED 附君心理由 `quote_ref`，ARCHIVED 不入诏；与 S13 §4.3 议政案 schema 的 `verdict`/`edict_ref` 字段同源串联。
 
 **恩怨账本条目结构**：
 
@@ -241,6 +247,10 @@
 # ── 第一级：规则引擎（零 LLM，确定性产出任务池）──
 def gen_task_pool(snapshot, persona):
     W = {dim: persona.style_weights[dim] / 100 for dim in DIMS}   # 人格偏置底数
+    # 方略树长期修正（REV-WRITEBACK 修订：跨文档一致性，承 S2 v0.10 注记）：
+    #   W[dim] *= fanglue_longterm_factor(dim)
+    #   方略树推进状态经 M2 快照第①层国力仪表盘进入（每国每旬 1 行摘要），
+    #   作为对应维权重底数的长期修正项——方略树不生成任务、不占任务潮配额。
     for dim, flag in snapshot.shortage_flags:
         if flag == "LOW":        W[dim] *= 1.5
         elif flag == "CRITICAL": W[dim] *= 2.5
@@ -261,6 +271,19 @@ def llm_weigh_and_narrate(pool, persona, snapshot):
     return TaskWaveDirective(pool=pool, priors=picks,
                              narrative=llm_edict_text(picks, persona))
 ```
+
+**任务池条目 schema（TaskPool 条目，REV-WRITEBACK 修订：跨文档一致性——与 GDD-S12 §4.2 模板库字段表逐字段对齐；架构侧 ref_goal_id 已由 ARCH-010 预埋，此处为设计层定义）**：
+
+| 字段 | 类型 | 示例值 | 说明 |
+|---|---|---|---|
+| `template_id` | string | `"tpl_han_welfare_01"` | 模板库唯一 ID（= S12 §4.2 主键） |
+| `dim` | enum | `"welfare"` | 收益维度（五维枚举，MVP 三维） |
+| `base_reward` | int | `8` | 声明基准（3-15，= S12 §4.2 `base_reward`） |
+| `ref_goal_id` | string | `"g1"` | 绑定诏令目标（池抽取时按目标维度挂 goal；S12 G1"非空率 100%"的绑定源） |
+| `war_tag` | enum | `"LOGISTICS" | null` | 战时豁免口径分类（对齐 REV-004 豁免清单：军事/后勤类） |
+| `variant_pool_ref` | string | `"assets/persona/han/task_variants"` | 人格语气变体引用（= S12 §4.2 `variant_pool`，叙事包装由 M5 权衡层输出） |
+
+- `TaskWaveDirective` 增 `pool_ref` 字段（§4.3）——任务系统（S12 T1/T2）作为**唯一下游实例化方**按池条目实例化，`ref_goal_id` 随实例落库；LLM 权衡层仅输出主推方向（引用 `template_id`）与叙事包装，不产任务数值（反目标 A6 不变）。
 
 摄政覆盖：`regent_override.priority_order` 仅改变任务池内条目的**下发排序**，不改权重底数（M6）。
 
@@ -309,7 +332,7 @@ def llm_weigh_and_narrate(pool, persona, snapshot):
 | 层级 | 玩家身份 | 与本系统的接触面 | 交互频率 |
 |---|---|---|---|
 | **L1 布衣** | 接诏者 | 消费端：看到国策诏、接到任务潮实例（任务系统转发）；从诏令与任务描述感受君主"性格" | 每旬 1 次诏令 + 持续任务流 |
-| **L2 士/门客** | 上书者 | 行为聚合端：上书卡（议题+理由+国力依据）经去重统计后进入 M2 `petition_tendency`；采纳与否在下旬诏令/语录中获反馈（被采纳感） | 每旬可上书（限频由朝堂系统定） |
+| **L2 士/门客** | 上书者 | 行为聚合端：上书卡（议题+理由+国力依据）经去重统计后进入 M2 `petition_tendency`（仅 memorial 倾向票）；旬度采信后在下旬诏令/语录获"君上采纳众议"**聚合反馈**（对齐 S13 §3.2 闭环）——**议政案（proposal，大夫档+）另走 C3→M3 裁决通道，采纳者获"采某卿之议"署名**（REV-WRITEBACK 修订：跨文档一致性，二分反馈语义） | 每旬可上书（限频由朝堂系统定） |
 | **L3 卿大夫** | 朝臣 | 直接对话端：①结构化朝堂对话（每日 3 次，走"短句先回+长文异步"）；②君心参悟追问（每日 2 次，对某条语录追问理由，回答暴露≤1 层依据）；③**异步长文以"诏书送达"仪式呈现**（信使+卷轴展开演出，对齐视觉锚点②④，v0.1 修订）；④官职=影响 M2 权重的权限（如太史令可增历史引力话题可见度） | 每日限频（配额见表 §4.6） |
 | **L4 摄政** | 共治者 | 干预端：M6 四项接口 + 廷议陈情（自由对话场合 3）；决策全程透明日志可查 | 每旬廷议 1 次发起权 |
 
