@@ -1435,8 +1435,7 @@ async function sendSms(){
   try{
     const sent = await cloud.auth.sendOtp({ phone });
     if(sent.error){
-      toast('验证码发送失败：'+sent.error.message+' —— 可改用 WorkBuddy 登录');
-      $('authHint').textContent = '短信通道可能未开通：请改用上方「WorkBuddy 账号登录」';
+      $('authHint').textContent = '验证码发送失败：'+sent.error.message+' —— 短信通道可能未开通，请改用「WorkBuddy 账号登录」';
       return;
     }
     window._lgcOtp = { phone, ...sent.data };
@@ -1453,11 +1452,19 @@ async function phoneLogin(){
   showLoading('验 证 中');
   try{
     const done = await cloud.auth.verifyOtp({ phone:p.phone, verificationId:p.verificationId, isExistingUser:p.isExistingUser, token });
-    if(done.error){ hideLoading(); toast('验证失败：'+done.error.message); return; }
-    const s = await cloud.auth.getSession();
+    if(done.error){
+      hideLoading();
+      $('authHint').textContent = '验证失败：'+done.error.message+' —— 验证码可能已失效，请重新获取';
+      window._lgcOtp = null; // 失败后验证凭据作废，必须重新获取
+      return;
+    }
     window._lgcOtp = null;
-    if(s.data && s.data.user) await enterLoggedIn(s.data.user.id);
-    else { hideLoading(); toast('验证通过但未取得会话，请重试'); }
+    const uid = done.data && done.data.user && done.data.user.id;
+    if(uid){ await enterLoggedIn(uid); return; }
+    const sess = await cloud.auth.getSession();
+    if(sess.data && sess.data.user){ await enterLoggedIn(sess.data.user.id); return; }
+    hideLoading();
+    $('authHint').textContent = '验证通过但未取得会话——请刷新页面重试';
   }catch(e){ hideLoading(); toast('验证失败：'+(e.message||'未知错误')); }
 }
 async function wbLogin(){
@@ -1474,12 +1481,7 @@ async function doLogout(){
   location.reload();
 }
 (async function boot(){
-  showLoading('开 卷');
-  try{
-    await restoreAuth();
-  }catch(e){
-    showAuth('云服连接失败，请刷新重试');
-  }
+  // 登录修复：所有按钮绑定必须在任何 await 之前——慢网络下用户会先点按钮
   $('soundBtn').onclick = ()=>{ const m = localStorage.getItem('lgc_mute')==='1'; localStorage.setItem('lgc_mute', m?'0':'1'); $('soundBtn').textContent = m?'🔔 音效：开':'🔕 音效：关'; if(!m) return; sfx('ok'); };
   if(localStorage.getItem('lgc_mute')==='1') $('soundBtn').textContent = '🔕 音效：关';
   $('feedbackBtn').onclick = openFeedback;
@@ -1494,6 +1496,12 @@ async function doLogout(){
   $('btnPhoneLogin').onclick = phoneLogin;
   $('btnWbLogin').onclick = wbLogin;
   $('btnSpectate').onclick = ()=>{ spectate=true; startSpectate(); };
+  showLoading('开 卷');
+  try{
+    await restoreAuth();
+  }catch(e){
+    showAuth('云服连接失败，请刷新重试');
+  }
 })();
 async function startSpectate(){
   showLoading('观 政');
