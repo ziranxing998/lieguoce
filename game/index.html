@@ -885,63 +885,25 @@ async function keqingCall(sys, user){
   return txt.trim();
 }
 function renderKeqing(){
-  if(spectate){ $('keqingBox').innerHTML='<div class="hint">观政模式无客卿随行——登录后可接入你自带的 AI。</div>'; return; }
-  const cfg = keqingCfg();
-  const canYian = rankIdxOf(player.prestige)>=4;
-  $('keqingBox').innerHTML = `
-    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <input type="text" id="kqEndpoint" placeholder="接口地址（如 https://api.deepseek.com）" value="${esc(cfg.endpoint)}" style="flex:1;min-width:200px;text-align:left;font-size:12px;padding:6px 10px">
-      <input type="password" id="kqKey" placeholder="API 密钥" value="${esc(cfg.key)}" style="width:150px;text-align:left;font-size:12px;padding:6px 10px">
-      <input type="text" id="kqModel" placeholder="模型名（如 deepseek-flash）" value="${esc(cfg.model)}" style="width:150px;text-align:left;font-size:12px;padding:6px 10px">
-      <button class="minor" id="btnKqSave">保存（只存本机）</button>
-    </div>
-    <div class="choices">
-      <button class="minor" id="btnKqMemo">上书代拟</button>
-      <button class="minor" id="btnKqExplain">诏书解读</button>
-      <button class="minor" id="btnKqTask" ${spectate?'disabled':''}>代办一件差事</button>
-    </div>
-    <div id="kqResult" class="hint" style="margin-top:8px;line-height:1.8">客卿的一切产出均以你的名义呈递、署名担责（白名单结构化，不进君主决策权流）。</div>`;
-  $('btnKqSave').onclick = ()=>{
-    localStorage.setItem('lgc_keqing', JSON.stringify({endpoint:$('kqEndpoint').value.trim(), key:$('kqKey').value.trim(), model:$('kqModel').value.trim()}));
-    toast('客卿已就位（配置仅存本机）');
-  };
-  $('btnKqMemo').onclick = async ()=>{
-    const r = $('kqResult');
-    r.textContent = '客卿正在拟稿……';
-    try{
-      const snapshot={}; for(const d of DIMS) snapshot[d.n]=nation[d.k];
-      const txt = await keqingCall('你是先秦游戏里玩家门下的客卿（AI 谋士）。请根据国势拟一句国策建议（40字内，先秦语气，直陈策略），只输出建议正文。',
-        JSON.stringify({国力:snapshot, 当前旬:nation.xun, 战事中:!!(warState&&warState.active)}));
-      r.innerHTML = `客卿代拟："${esc(txt)}" ${canYian?'<button class="minor" id="btnKqSubmit">呈递此案</button>':'（大夫档可亲呈议政案）'}`;
-      const sb=$('btnKqSubmit');
-      if(sb) sb.onclick = async ()=>{ $('yianInput').value = txt.slice(0,40); await submitYian(); r.textContent='已以你之名呈递。'; };
-    }catch(e){ r.textContent = '客卿失手：'+e.message; }
-  };
-  $('btnKqExplain').onclick = async ()=>{
-    const r = $('kqResult');
-    r.textContent = '客卿正在解读……';
-    try{
-      const txt = await keqingCall('你是先秦游戏里玩家门下的客卿。请用一句白话解读君上这份诏书的意图与玩家应对要点（60字内）。只输出解读。',
-        `诏书：${(decree&&decree.text)||'（暂无诏书）'} 君心参悟：${(decree&&decree.quote)||''}`);
-      r.innerHTML = `客卿解读：${esc(txt)}`;
-    }catch(e){ r.textContent = '客卿失手：'+e.message; }
-  };
-  $('btnKqTask').onclick = async ()=>{
-    const t = tasks.find(x=>!x.done);
-    if(!t){ toast('本旬差事已尽'); return; }
-    const r = $('kqResult');
-    r.textContent = '客卿正在权衡……';
-    try{
-      const txt = await keqingCall('你是先秦游戏里玩家门下的客卿。面对这件差事，只输出 JSON：{"choice":0或1,"reason":"一句话"}。choice 0=尽心办（风险低收益高），1=取巧办（省力但收益减半）。',
-        `差事：${t.title}——${t.desc}（${t.type}事，宜利${t.reward}）`);
-      let j=null; try{ j=JSON.parse(txt.match(/\{[\s\S]*\}/)[0]); }catch(e){}
-      const choice = j && j.choice===1 ? 1 : 0;
-      r.textContent = `客卿决定${choice===0?'尽心办':'取巧办'}：${(j&&j.reason)||''}`;
-      await startTask(t, choice, true);
-      renderAll();
-    }catch(e){ r.textContent = '客卿失手：'+e.message; }
-  };
+  renderKeqingBase();
+  // 权限档 UI（玩家主权：随时一键收回）
+  const mode = localStorage.getItem('lgc_keqing_mode')||'assist';
+  const box = $('keqingBox');
+  if(!box) return;
+  const div = document.createElement('div');
+  div.className='task'; div.style.marginTop='10px';
+  div.innerHTML = '<div class="thead"><span><span class="tname">客 卿 权 限</span></span><small style="color:var(--ink-dim)">玩家主权铁律：随时一键收回</small></div>'
+    + '<div class="choices">'
+    + '<button class="minor" data-kqmode="assist" style="'+(mode==='assist'?'border-color:var(--seal);color:#d49a8a':'')+'">辅助权限（建议/代办，逐次经你）</button>'
+    + '<button class="minor" data-kqmode="regent" style="'+(mode==='regent'?'border-color:var(--seal);color:#d49a8a':'')+'">摄政权限（AI 全权施政）</button>'
+    + '</div>'
+    + (mode==='regent' ? '<div class="choices"><button class="minor" id="btnKqRegent" style="border-color:var(--seal)">⚡ 客卿摄政 · 立即施政一轮</button></div><div class="hint">摄政档：每次上线自动施政一轮（每日限一次），此处可手动加轮；一切行为署名留痕。</div>' : '<div class="hint">辅助档：AI 仅解读、代拟与代办，逐次经你。</div>');
+  box.appendChild(div);
+  div.querySelectorAll('button[data-kqmode]').forEach(b0=>{ b0.onclick=()=>{ localStorage.setItem('lgc_keqing_mode', b0.dataset.kqmode); toast(b0.dataset.kqmode==='regent'?'客卿已获摄政权限——每日上线自动施政一轮':'已收回权限——客卿退为辅助'); renderKeqing(); }; });
+  const rb0 = div.querySelector('#btnKqRegent');
+  if(rb0) rb0.onclick=()=>regentRun(false);
 }
+
 async function startTask(task, choiceIdx){
   if(!requirePlay()) return;
   if(busy) return; busy = true; showLoading('领 差');
@@ -1521,7 +1483,7 @@ async function startGame(){
     localStorage.setItem('lgc_memo_'+player.token, '[]');
     document.body.classList.remove('setup-bg');
     $('setup').style.display='none'; $('game').style.display='block';
-    await enterWorld(); try{ enterScene(); }catch(e){}
+    await enterWorld(); try{ enterScene(); }catch(e){} try{ setTimeout(()=>regentRun(false), 2500); }catch(e){}
     const meta0 = NATION_META[player.nation_key];
     const avg0 = Math.round(((nation.military||40)+(nation.economy||40)+(nation.livelihood||40)+(nation.culture||40)+(nation.diplomacy||40))/5);
     const strong0 = avg0>=45?'强国之戚':(avg0>=38?'中人之国':'弱邦孤臣');
@@ -1579,7 +1541,7 @@ async function enterLoggedIn(uid){
       document.body.classList.remove('setup-bg');
       $('auth').style.display='none'; $('setup').style.display='none'; $('game').style.display='block';
       $('btnLogout').style.display='inline-block'; $('btnLogout').textContent='登出';
-      await enterWorld(); try{ enterScene(); }catch(e){}
+      await enterWorld(); try{ enterScene(); }catch(e){} try{ setTimeout(()=>regentRun(false), 2500); }catch(e){}
     }else{
       document.body.classList.remove('setup-bg');
       $('auth').style.display='none'; renderSetup(); $('setup').style.display='block';
@@ -2538,6 +2500,49 @@ function drawSpot(ctx, sp){
     ctx.beginPath(); ctx.moveTo(sp.x+50,sp.y+sp.h-8); ctx.lineTo(sp.x+72,sp.y+22); ctx.lineTo(sp.x+96,sp.y+sp.h-8); ctx.closePath(); ctx.fill();
   }
   ctx.fillStyle='#4a3a26'; ctx.font='13px serif'; ctx.textAlign='center'; ctx.fillText(sp.name, sp.x+sp.w/2, sp.y+sp.h+18);
+}
+
+/* ============ 客卿摄政（AI 全权施政轮） ============ */
+async function regentRun(manual){
+  const cfg = keqingCfg();
+  if(!cfg.endpoint || !cfg.key){ if(manual) toast('请先在客卿面板填入 AI 接口与密钥'); return; }
+  const today = new Date().toISOString().slice(0,10);
+  if(!manual && localStorage.getItem('lgc_regent_day')===today){ return; }
+  if(!player || spectate) return;
+  if(localStorage.getItem('lgc_keqing_mode')!=='regent') return;
+  showLoading('客 卿 摄 政');
+  try{
+    localStorage.setItem('lgc_regent_day', today);
+    const mine = await dbRead('player_tasks', q=>q.eq('token',player.token).eq('xun',nation.xun));
+    const doneCnt = mine.filter(r0=>r0.dim!=='gather' && r0.dim!=='proj').length;
+    const ri = rankIdxOf(player.prestige); const limit = ri>=6?2:1;
+    const stock = await resLoad();
+    let arr = await loadProj(); const proj = arr.find(pr0=>!pr0.done);
+    const gatherRun = (await dbRead('player_tasks', q=>q.eq('token',player.token).eq('dim','gather'))).find(x=>x.status==='running');
+    const snapshot = { 国力:{军:nation.military,经:nation.economy,民:nation.livelihood,文:nation.culture,交:nation.diplomacy}, 国库:stock, 人口:nation.pop||200, 旬:nation.xun, 门派:player.school||'无', 已办差:doneCnt+'/'+limit, 采集中:(gatherRun?((RES.find(x=>x.k===gatherRun.war_side)||{}).n||''):'无'), 工事:(proj?{名:proj.name,需求:proj.need,已有:proj.have}:null), 可选差事:[] };
+    if(tasks && tasks.length){ for(let i0=0;i0<tasks.length;i0++){ if(!mine.some(x=>x.task_idx===i0)) snapshot.可选差事.push({i:i0, 名:tasks[i0].title, 类:tasks[i0].type, 收益:tasks[i0].reward}); } }
+    const sys = '你是玩家的客卿（AI 幕僚），已获玩家全部权限，今轮代其施政。从下列动作中择优执行 2-4 项：接差事 task（i=差事序号，choice 0尽心 1循例）、开始采集 gather（r=grain/wood/stone 之一，选最缺者）、结算已有采集 stop_gather、赶工拨付 alloc（有工事且国库有余时）、上书 memo（k=' + MEMORIALS.map(m=>m.k).join('/') + '）' + (ri>=4 ? '、斡旋 mediate' : '') + '。决策提示：先办收益最高的差事；缺什么资源采什么；工事缺口大且国库有余则拨付；门派技能有加成的动作优先。只输出 JSON，格式：{"thoughts":"一句施政思路","do":[{"a":"task","i":0,"choice":0}]}';
+    const r = await keqingCall(sys, JSON.stringify(snapshot));
+    let plan = null;
+    try{ const m0 = r.match(/\{[\s\S]*\}/); plan = JSON.parse(m0[0]); }catch(e0){}
+    if(!plan || !plan.do) throw new Error('客卿未给出可行方略（返回: '+r.slice(0,120)+'）');
+    const done = [];
+    for(const st of plan.do){
+      try{
+        if(st.a==='task' && tasks && tasks[st.i]!=null && !mine.some(x=>x.task_idx===st.i)){ await startTask(tasks[st.i], st.choice===1?1:0); done.push('开工·'+tasks[st.i].title); }
+        else if(st.a==='gather' && ['grain','wood','stone'].indexOf(st.r)>=0 && !gatherRun){ await startGather(st.r); gatherRun = null; done.push('采集·'+((RES.find(x=>x.k===st.r)||{}).n||st.r)); }
+        else if(st.a==='stop_gather'){ const g1 = (await dbRead('player_tasks', q=>q.eq('token',player.token).eq('dim','gather'))).find(x=>x.status==='running'); if(g1){ await settleGather(g1); done.push('采集结算'); } }
+        else if(st.a==='alloc' && proj){ const used = (await dbRead('player_actions', q=>q.eq('token',player.token).eq('action_type','alloc').order('created_at',{ascending:false}).limit(10))).filter(a0=>new Date(a0.created_at)>new Date(Date.now()-86400000)).reduce((s0,a0)=>s0+(a0.amount||0),0); const remain = 800-used; if(remain>0){ const r0 = await allocToProj(remain, (hasSkill('qixie')?0.20:0)+(hasSkill('jiguan')?0.15:0)); if(r0.ok){ await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'alloc', dim:'proj', amount:r0.moved, note:'客卿摄政·赶工+'+r0.moved}); done.push('赶工+'+r0.moved); } } }
+        else if(st.a==='memo' && MEMORIALS.some(m1=>m1.k===st.k)){ await pickMemo(st.k); done.push('上书·'+st.k); }
+        else if(st.a==='mediate' && ri>=4){ await mediate(); done.push('斡旋'); }
+        else if(st.a==='learn' && SKILLS.some(x1=>x1.id===st.id)){ await learnSkill(st.id); done.push('修业·'+st.id); }
+      }catch(e1){ /* 单项失败不阻塞整轮 */ }
+    }
+    await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'regent', dim:'regent', amount:done.length, note:'客卿摄政：'+(plan.thoughts||'')+'（'+(done.join('；')||'按兵不动')+'）'});
+    toast('客卿施政毕：'+(done.join('；')||'客卿按兵不动'));
+    renderAll();
+  }catch(e){ toast('摄政未成：'+(e.message||'未知')); }
+  hideLoading();
 }
 
 (async function boot(){
