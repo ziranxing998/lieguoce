@@ -1413,6 +1413,12 @@ async function enterLoggedIn(uid){
 }
 async function restoreAuth(){
   const url = new URL(location.href);
+  const hadCode = url.searchParams.has('code');
+  if(url.searchParams.has('error') && !url.searchParams.has('code')){
+    const ed = url.searchParams.get('error_description') || url.searchParams.get('error') || '未知错误';
+    showAuth('授权页返回错误：'+ed+' —— 常见原因：本应用的「WorkBuddy 登录」开关未开启，或回调域名未注册。请到 WorkBuddy 云服务管理页检查登录设置；或改用手机验证码登录。');
+    return;
+  }
   if(url.searchParams.has('code') || url.searchParams.has('error')){
     const provider = url.searchParams.get('provider');
     if(provider==='workbuddy' && typeof cloud.auth.handleWorkBuddyCallback==='function'){
@@ -1427,7 +1433,10 @@ async function restoreAuth(){
         showAuth('授权交换未完成（本地凭证丢失）。常见原因：授权是在新标签页或内嵌窗口里完成的——请回到发起登录的原标签页重新点击「WorkBuddy 账号登录」，或改用手机验证码登录。');
         return;
       }
-    }else if(provider){ showAuth('该登录方式暂不可用，请用手机验证码'); return; }
+    }else{
+      showAuth('回调参数异常（provider='+(provider||'缺失')+(hadCode?'，code=有':'，code=无')+'）。请截屏登录框下方这行字连同地址栏内容反馈给开发者；或改用手机验证码登录。');
+      return;
+    }
   }
   const { data:session } = await cloud.auth.getSession();
   if(session && session.user){ await enterLoggedIn(session.user.id); return; }
@@ -1495,6 +1504,7 @@ async function doLogout(){
 }
 (async function boot(){
   // 登录修复：所有按钮绑定必须在任何 await 之前——慢网络下用户会先点按钮
+  try{ const bv=document.createElement('div'); bv.textContent='build 20261102-C'; bv.style.cssText='position:fixed;left:8px;bottom:30px;font-size:10px;color:#9a8a7a;opacity:.75;z-index:9;pointer-events:none'; document.body.appendChild(bv); }catch(e){}
   $('soundBtn').onclick = ()=>{ const m = localStorage.getItem('lgc_mute')==='1'; localStorage.setItem('lgc_mute', m?'0':'1'); $('soundBtn').textContent = m?'🔔 音效：开':'🔕 音效：关'; if(!m) return; sfx('ok'); };
   if(localStorage.getItem('lgc_mute')==='1') $('soundBtn').textContent = '🔕 音效：关';
   $('feedbackBtn').onclick = openFeedback;
