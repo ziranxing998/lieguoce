@@ -196,9 +196,12 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 
 <div id="game" class="wrap" style="display:none">
   <div id="guideBox" class="panel" style="display:none;border-color:var(--bronze)"></div>
+  <div id="rulesBox" class="panel" style="display:none"></div>
   <div id="topbar">
     <div class="who" id="who"></div>
+    <div id="specSwitch" style="display:none"></div>
     <div>
+      <button class="minor" id="btnRules">规则</button>
       <button class="minor" id="btnLogout" style="display:none">登出</button>
       <button class="minor" id="btnReset" style="border-color:#5a3228;color:#a3705e">弃官重修</button>
     </div>
@@ -1147,6 +1150,45 @@ async function renderMerit(){
       '<div class="hint" style="margin-top:6px">办差：成 '+done+' / 蹉跎 '+fail+' · 方略 '+(byType['fanglue']||0)+' 次 · 上书 '+(byType['memorial']||0)+' 道 · 斡旋 '+(byType['mediate']||0)+' 次</div>'+board;
   }catch(e){}
 }
+function toggleRules(){
+  const box = $('rulesBox');
+  if(box.style.display==='block'){ box.style.display='none'; return; }
+  const rankHtml = RANKS.map((r,i)=>{
+    const priv = {1:'双格上书',4:'亲笔议政案·斡旋',6:'领双差'}[i];
+    return '<div class="logline">'+r.n+'（声望 '+r.v+'）'+(priv?' —— '+priv:'')+'</div>';
+  }).join('');
+  box.innerHTML = '<div class="panel-title"><span>规 制 速 查</span><button class="minor" id="btnRulesClose">收起</button></div>'+
+    '<div style="font-size:13px;line-height:2">'+
+    '<b style="color:var(--bronze-l)">官阶</b>：'+rankHtml+
+    '<b style="color:var(--bronze-l)">旬与赛季</b>：点"进入下一旬"推进时间；12 旬一季，季末太史令修史、列国重开，声望作为遗产保留。'+
+    '<b style="color:var(--bronze-l)">会战</b>：每逢第 4/7/10 旬，关系最紧张的国对可能开战；攻守双方做 ⚔ 任务推拉战线；边城→雄关→都城依次攻防，都城陷落定胜负。'+
+    '<b style="color:var(--bronze-l)">方略</b>：军制/变法/水利/纵横四条长期研究线，每旬可推行一次，全国受益。'+
+    '<b style="color:var(--bronze-l)">客卿</b>：在"客卿"面板接入你自己的 AI（密钥只存本机），可代拟上书、解读诏书、代办差事——署你的名、担你的责。'+
+    '<b style="color:var(--bronze-l)">铁律</b>：你的手动操作永远大于 AI——AI 做的每件事你都可撤销、可覆盖。</div>';
+  box.style.display='block';
+  $('btnRulesClose').onclick = ()=>{ box.style.display='none'; };
+}
+function renderSpecSwitch(){
+  if(!spectate) return;
+  $('specSwitch').style.display='flex';
+  $('specSwitch').style.gap='6px';
+  $('specSwitch').style.flexWrap='wrap';
+  $('specSwitch').innerHTML = '<span style="font-size:12px;color:var(--ink-dim);align-self:center">观政视角：</span>' +
+    Object.keys(NATION_META).map(k=>'<button class="minor spec-nation" data-k="'+k+'">'+NATION_META[k].n+'</button>').join('');
+  $('specSwitch').querySelectorAll('.spec-nation').forEach(el=>{
+    el.onclick = async ()=>{
+      player.nation_key = el.dataset.k;
+      decree = null; tasks = [];
+      showLoading('移 步 他 国');
+      try{
+        nation = await loadNation(player.nation_key);
+        await loadWarState();
+        renderAll();
+      }catch(e){ toast('切换失败'); }
+      hideLoading();
+    };
+  });
+}
 function renderGuide(){
   if(localStorage.getItem('lgc_guide_seen') || spectate){ $('guideBox').style.display='none'; return; }
   $('guideBox').style.display='block';
@@ -1388,6 +1430,7 @@ async function doLogout(){
   $('btnNext').onclick = nextXun;
   $('btnReset').onclick = resetGame;
   $('btnLogout').onclick = ()=>{ if(spectate){ location.reload(); } else { doLogout(); } };
+  $('btnRules').onclick = toggleRules;
   $('btnSms').onclick = sendSms;
   $('btnPhoneLogin').onclick = phoneLogin;
   $('btnWbLogin').onclick = wbLogin;
@@ -1403,6 +1446,7 @@ async function startSpectate(){
     nation = await loadNation('qin');
     await loadWarState();
     renderAll();
+    renderSpecSwitch();
     toast('观政模式：可看列国局势，登录后才能入朝行事');
   }catch(e){ toast('加载失败：'+(e.message||'未知错误')); }
   hideLoading();
