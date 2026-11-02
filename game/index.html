@@ -812,12 +812,17 @@ async function keqingCall(sys, user){
   const res = await fetch(cfg.endpoint.replace(/\/+$/,'')+'/chat/completions', {
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+cfg.key},
-    body: JSON.stringify({ model: cfg.model||'deepseek-flash', messages:[{role:'system',content:sys},{role:'user',content:user}], stream:false, max_tokens:300 }),
+    body: JSON.stringify({ model: cfg.model||'deepseek-flash', messages:[{role:'system',content:sys},{role:'user',content:user}], stream:false, max_tokens:800 }),
   });
   if(!res.ok) throw new Error('接口返回 '+res.status+'（若为跨域拦截，请换支持浏览器直连的服务商）');
   const j = await res.json();
-  const txt = j.choices?.[0]?.message?.content || '';
-  if(!txt) throw new Error('客卿未作答');
+  const msg = j.choices?.[0]?.message || {};
+  const txt = msg.content || '';
+  if(!txt){
+    const fin = j.choices?.[0]?.finish_reason || '未知';
+    if(msg.reasoning_content) throw new Error('客卿在想但没说完（思考占了全部回答长度，finish_reason='+fin+'）。请在客卿面板换用非思考型模型，或把模型名改为 deepseek-flash。');
+    throw new Error('客卿未作答（finish_reason='+fin+'）· 原始返回: '+JSON.stringify(j).slice(0,200));
+  }
   return txt.trim();
 }
 function renderKeqing(){
