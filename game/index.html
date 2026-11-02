@@ -812,7 +812,7 @@ async function keqingCall(sys, user){
   const res = await fetch(cfg.endpoint.replace(/\/+$/,'')+'/chat/completions', {
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':'Bearer '+cfg.key},
-    body: JSON.stringify({ model: cfg.model||'deepseek-chat', messages:[{role:'system',content:sys},{role:'user',content:user}], stream:false, max_tokens:300 }),
+    body: JSON.stringify({ model: cfg.model||'deepseek-flash', messages:[{role:'system',content:sys},{role:'user',content:user}], stream:false, max_tokens:300 }),
   });
   if(!res.ok) throw new Error('接口返回 '+res.status+'（若为跨域拦截，请换支持浏览器直连的服务商）');
   const j = await res.json();
@@ -826,9 +826,9 @@ function renderKeqing(){
   const canYian = rankIdxOf(player.prestige)>=4;
   $('keqingBox').innerHTML = `
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px">
-      <input type="text" id="kqEndpoint" placeholder="接口地址（如 https://api.deepseek.com/v1）" value="${esc(cfg.endpoint)}" style="flex:1;min-width:200px;text-align:left;font-size:12px;padding:6px 10px">
+      <input type="text" id="kqEndpoint" placeholder="接口地址（如 https://api.deepseek.com）" value="${esc(cfg.endpoint)}" style="flex:1;min-width:200px;text-align:left;font-size:12px;padding:6px 10px">
       <input type="password" id="kqKey" placeholder="API 密钥" value="${esc(cfg.key)}" style="width:150px;text-align:left;font-size:12px;padding:6px 10px">
-      <input type="text" id="kqModel" placeholder="模型名（如 deepseek-chat）" value="${esc(cfg.model)}" style="width:150px;text-align:left;font-size:12px;padding:6px 10px">
+      <input type="text" id="kqModel" placeholder="模型名（如 deepseek-flash）" value="${esc(cfg.model)}" style="width:150px;text-align:left;font-size:12px;padding:6px 10px">
       <button class="minor" id="btnKqSave">保存（只存本机）</button>
     </div>
     <div class="choices">
