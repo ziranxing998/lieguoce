@@ -125,6 +125,11 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   .war-labels{display:flex;justify-content:space-between;font-size:12px;color:var(--ink-dim);}
   .war-state{font-size:13px;color:var(--bronze-l);letter-spacing:.05em;line-height:1.8;}
   .war-flag{color:var(--red);}
+  .wnode{display:inline-block;border:1px solid #3a2f20;border-radius:6px;padding:3px 10px;font-size:13px;margin:2px 0;letter-spacing:.05em;}
+  .wnode-fallen{background:#33251a;color:var(--bronze-l);border-color:var(--bronze);}
+  .wnode-active{background:#3a1e16;color:#d49a8a;border-color:var(--seal);box-shadow:0 0 10px #a63c2a44;}
+  .wnode-future{color:var(--ink-dim);}
+  .warrow{color:var(--ink-dim);margin:0 4px;}
 </style>
 </head>
 <body>
@@ -804,9 +809,10 @@ async function completeTask(task, choiceIdx, viaKeqing){
     const oldRank = rankOf(player.prestige).n;
     player = {...player, prestige:pv};
     const newRank = rankOf(player.prestige).n;
-    // 行为记录
+    // 行为记录（ref_goal_id 对齐：trace 到诏令）
     await cloud.database.from('player_actions').insert({
       token:player.token, nation_key:player.nation_key, xun:nation.xun,
+      decree_id:(decree&&decree.id)||null,
       action_type:'task', dim:dimKey, amount:amt,
       note:`${viaKeqing?'【客卿代笔】':''}${task.title}·${choiceIdx===0?'尽心办':'循例办'}${ok?'·成':'·失'}${warNote}`,
     });
@@ -1057,7 +1063,10 @@ async function renderNews(){
   if(qinRow && qinRow.war_active){
     const p = qinRow.war_progress||0;
     const node = qinRow.war_node||0;
-    const nodeChips = WAR_NODES.map((n,i)=> i<node?`✅${n}`:(i===node?`⚔<b>${n}</b>`:n)).join(' → ');
+    const nodeChips = WAR_NODES.map((n,i)=>{
+      const st = i<node ? 'fallen' : (i===node ? 'active' : 'future');
+      return '<span class="wnode wnode-'+st+'">'+(st==='fallen'?'✅ ':'')+(st==='active'?'⚔ ':'')+n+(st==='active'?'（交战中）':'')+'</span>';
+    }).join('<span class="warrow">→</span>');
     warHtml = `
       <div class="war-state">⚔ 秦楚会战进行中 · 始于第${qinRow.war_xun}旬 · 攻至：${nodeChips} ${player.nation_key==='qin'?'（我军攻势）':(player.nation_key==='chu'?'（我军守御）':'（齐当观变谋利）')}</div>
       <div class="warbar"><div class="fill-q" style="width:${p}%"></div><div class="fill-c" style="width:${100-p}%"></div></div>
