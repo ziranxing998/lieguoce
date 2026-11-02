@@ -1765,7 +1765,7 @@ const SCENE_SPOTS = [
 ];
 const SCENE_ALL = SCENE_BUILDINGS.concat(SCENE_SPOTS);
 function bDoor(b){ return {x:b.x + b.w/2, y:b.y + b.h + 14}; }
-let sceneActive=false, sceneKeys={}, sceneTarget=null, scenePhase=0, sceneNear=null, sceneLast=0;
+let sceneActive=false, sceneKeys={}, sceneTarget=null, scenePhase=0, sceneNear=null, sceneLast=0, sceneStall=0, sceneLastD=0;
 function sceneBuildingOf(k){ return SCENE_ALL.find(b=>b.k===k); } // 修复：采集点也在 SCENE_ALL
 function todayDailyBuilding(){
   const ev = DAILY_EVENTS[(new Date().getDate() + nation.xun*3 + player.token.length) % DAILY_EVENTS.length];
@@ -1816,19 +1816,34 @@ function sceneLoop(ts){
   if(sceneKeys['a']||sceneKeys['arrowleft'])dx-=1; if(sceneKeys['d']||sceneKeys['arrowright'])dx+=1;
   var P=window._scenePlayer;
   if(P){
-    if(dx||dy){ sceneTarget=null; var l=Math.sqrt(dx*dx+dy*dy); P.x+=dx/l*sp; P.y+=dy/l*sp; P.facing=dx<0?-1:(dx>0?1:P.facing); P.moving=true; }
-    else if(sceneTarget){
+    function collides(x0,y0){
+      for(const b of SCENE_ALL){ if(x0>b.x-8 && x0<b.x+b.w+8 && y0>b.y-8 && y0<b.y+b.h+30) return true; }
+      return false;
+    }
+    function tryMove(nx0,ny0){
+      if(!collides(nx0,ny0)){ P.x=nx0; P.y=ny0; return; }
+      if(!collides(nx0,P.y)){ P.x=nx0; return; } // 沿墙滑动：横行
+      if(!collides(P.x,ny0)){ P.y=ny0; return; } // 沿墙滑动：竖行
+      sceneTarget=null; // 完全卡死：放弃目标
+    }
+    if(dx||dy){
+      sceneTarget=null;
+      var l=Math.sqrt(dx*dx+dy*dy);
+      var nx0=P.x+dx/l*sp, ny0=P.y+dy/l*sp;
+      P.facing=dx<0?-1:(dx>0?1:P.facing); P.moving=true;
+      tryMove(nx0,ny0);
+    } else if(sceneTarget){
       var tx=sceneTarget.x-P.x, ty=sceneTarget.y-P.y, dist=Math.sqrt(tx*tx+ty*ty);
       if(dist<6){ sceneTarget=null; P.moving=false; if(sceneTargetBuild){ var b=sceneTargetBuild; sceneTargetBuild=null; openBuilding(b.k); } }
-      else { P.x+=tx/dist*sp; P.y+=ty/dist*sp; P.facing=tx<0?-1:(tx>0?1:P.facing); P.moving=true; }
+      else {
+        P.facing=tx<0?-1:(tx>0?1:P.facing); P.moving=true;
+        tryMove(P.x+tx/dist*sp, P.y+ty/dist*sp);
+        sceneStall = (sceneLastD>0 && Math.abs(sceneLastD-dist)<0.5) ? (sceneStall+1) : 0;
+        sceneLastD = dist;
+        if(sceneStall>120){ sceneTarget=null; sceneTargetBuild=null; sceneStall=0; toast('去路被挡——请绕行或点近处的目标'); }
+      }
     } else P.moving=false;
     P.x=Math.max(16,Math.min(944,P.x)); P.y=Math.max(180,Math.min(524,P.y));
-    for(const b of SCENE_BUILDINGS){
-      if(P.x>b.x-6 && P.x<b.x+b.w+6 && P.y>b.y-6 && P.y<b.y+b.h+34){
-        if(dx>0) P.x=b.x-7; if(dx<0) P.x=b.x+b.w+7;
-        if(dy>0) P.y=b.y-7; if(dy<0) P.y=b.y+b.h+35;
-      }
-    }
   }
   sceneNear=null;
   if(P){ var best=1e9; for(const b of SCENE_ALL){ var d0=bDoor(b); var dd=(P.x-d0.x)*(P.x-d0.x)+(P.y-d0.y)*(P.y-d0.y); if(dd<70*70 && dd<best){ best=dd; sceneNear=b; } } }
