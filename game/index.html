@@ -1890,6 +1890,20 @@ function sceneLoop(ts){
   }
   sceneNear=null;
   if(P){ var best=1e9; for(const b of SCENE_ALL){ var d0=bDoor(b); var dd=(P.x-d0.x)*(P.x-d0.x)+(P.y-d0.y)*(P.y-d0.y); if(dd<70*70 && dd<best){ best=dd; sceneNear=b; } } }
+  /* 驻留自动开工：站在采集点上 1.5 秒即下地干活 */
+  try{
+    if(sceneNear && sceneNear.res && player && !spectate){
+      var gRunX=(window._myTaskRows||[]).find(function(x){return x.dim==='gather'&&x.status==='running';});
+      if(!gRunX){
+        var nowD=Date.now();
+        if(window._dwellKey!==sceneNear.k){ window._dwellKey=sceneNear.k; window._dwellSince=nowD; }
+        else if(nowD-(window._dwellSince||0)>1500 && !busy && !window._bmOpen){
+          window._dwellSince=nowD;
+          startGather(sceneNear.res);
+        }
+      } else { window._dwellKey=null; }
+    } else { window._dwellKey=null; }
+  }catch(eD){}
   drawScene(ctx);
     }catch(e0){ var em0='场景异常：'+(e0.message||e0); var st0=$('sceneTip'); if(st0){ st0.textContent=em0; st0.style.color='#d49a8a'; } if(sceneLoop._lastErr!==em0){ sceneLoop._lastErr=em0; try{ toast(em0); }catch(e1){} } } // 循环永不静默猝死，错误固定显示可复制
   requestAnimationFrame(sceneLoop);
@@ -1930,7 +1944,7 @@ function drawScene(ctx){
     var d0=bDoor(sceneNear);
     ctx.strokeStyle='#a63c2a'; ctx.lineWidth=2; ctx.strokeRect(sceneNear.x-3, sceneNear.y-3, sceneNear.w+6, sceneNear.h+6);
     ctx.fillStyle='#5a3228'; ctx.font='14px serif'; ctx.textAlign='center';
-    var lbl0 = sceneNear.res ? ((gRun0&&gRun0.war_side===sceneNear.res)?'⛏ E 结算采集 · '+sceneNear.name:'E 开始采集'+((RES.find(x=>x.k===sceneNear.res)||{}).n||'')+' · '+sceneNear.name) : ('按 E 或点击进入 · '+sceneNear.name);
+    var lbl0 = sceneNear.res ? ((gRun0&&gRun0.war_side===sceneNear.res)?'⛏ E 结算采集 · '+sceneNear.name:'原地稍候即自动开始 · E 查看详情 · '+sceneNear.name) : ('按 E 或点击进入 · '+sceneNear.name);
     ctx.fillText(lbl0, d0.x, d0.y+22);
   }
 }
@@ -1971,6 +1985,7 @@ function drawPlayer(ctx,P){
   ctx.beginPath(); ctx.moveTo(P.x+4,P.y+4); ctx.lineTo(P.x+4-step,P.y+12); ctx.stroke();
 }
 function openBuilding(k){
+  window._bmOpen=true;
   var b=sceneBuildingOf(k); if(!b) return;
   if(!player || spectate){ toast('观政模式只能看——登录入朝方可行事'); return; }
   $('bmTitle').textContent=b.name; $('bmSub').textContent=b.sub||('经办 '+b.dim+' 之务');
@@ -1985,6 +2000,7 @@ function openBuilding(k){
 }
 function closeBuilding(){ $('bMask').classList.remove('on'); }
 function chaotangHtml(){
+  window._bmOpen=false;
   var h='';
   h+='<div class="result ok" style="margin-bottom:10px"><b>君上晨谕</b>'+(window._dailyEdict?(' · '+esc(window._dailyEdict)):'：君上今日尚未发谕')+'</div>';
   if(decree){ h+='<div class="tdesc" style="margin-bottom:8px">【国策诏】'+esc(decree.text||'')+'</div>'; if(decree.quote) h+='<div class="hint">君心参悟：'+esc(decree.quote)+'</div>'; }
