@@ -40,7 +40,7 @@ if (bootHead.indexOf('await restoreAuth') === -1 || bootHead.indexOf('await rest
 console.log('[2] 设计内容：十大系统全部接线');
 const systems = [
   ['国策诏（AI+模板兜底）', ['llmDecree', 'templateDecreeFull', 'ensureDecree']],
-  ['办差（尽心/循例）', ['completeTask', 'bump_nation_dim']],
+  ['办差（开工→办理→验收）', ['startTask', 'settleTask', 'player_tasks', 'bump_nation_dim']],
   ['上书/议政案', ['pickMemo', 'submitYian']],
   ['方略树', ['pushFanglue', 'renderFang']],
   ['会战（任意两国）', ['maybeStartWar', 'settleWar', 'getWarNodes', 'WAR_CAPITALS']],
@@ -49,6 +49,8 @@ const systems = [
   ['客卿 BYO', ['keqingCall', 'renderKeqing']],
   ['摄政', ['_regentId']],
   ['功绩簿/反馈/规则', ['renderMerit', 'submitFeedback', 'toggleRules']],
+  ['旬制7日节奏', ['XUN_MS', 'xun_started_at', 'renderDaily', 'DAILY_EVENTS']],
+  ['君上晨谕（AI 每日批语）', ['ensureDailyEdict', 'llmDailyEdict', 'daily_edicts']],
 ];
 for (const [name, needles] of systems) {
   const miss = needles.filter(n => !game.includes(n));

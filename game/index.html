@@ -222,6 +222,9 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
     <div id="oldBox"></div>
   </div>
   <div class="panel">
+    <div id="dailyBox"></div>
+  </div>
+  <div class="panel">
     <div class="panel-title"><span>任 事</span><small>选一种做法去办差 · 办差影响国力与你的声望</small></div>
     <div id="taskBox"></div>
   </div>
@@ -392,7 +395,7 @@ const NATION_INIT = { // 七国差异化开局（战国初期格局）：秦强�
   wei:{military:45,economy:50,livelihood:40,culture:40,diplomacy:45},
   han:{military:30,economy:35,livelihood:35,culture:35,diplomacy:30},
 };
-const SEASON_LEN = 12; // 一季 12 旬
+const SEASON_LEN = 12; const XUN_MS = (parseFloat(localStorage.getItem('lgc_xun_days'))||7)*86400000; const TASK_HOURS = t => t.war_side ? 12 : (t.type==='武' ? 36 : 24);; // 一季 12 旬
 
 let player = null;      // {token,name,nation_key,prestige}
 let nation = null;      // 行数据
@@ -783,7 +786,7 @@ async function seasonSettle(){
   }
   try{ await cloud.database.from('decrees').delete().neq('nation_key','tianxia'); }catch(e){} // S2：清旧季诏书
   try{ localStorage.removeItem('lgc_memo_'+player.token); localStorage.removeItem('lgc_yian_'+player.token); }catch(e){} // M4：清跨季残留
-  await cloud.database.from('decrees').insert({nation_key:'tianxia', xun:1, content:JSON.stringify({history, ranking:rankTxt}), quote:history.slice(0,60), focus_dim:null, source:'history'});
+  await cloud.database.from('decrees').insert({nation_key:'tianxia', xun:1, xun_started_at:new Date().toISOString(), content:JSON.stringify({history, ranking:rankTxt}), quote:history.slice(0,60), focus_dim:null, source:'history'});
   // 重置世界：国力回 40、旬回 1、战事/方略/外交清空（声望作为跨季遗产保留）
   for(const r of rows){
     const bonus = (scored[0] && scored[0].key===r.nation_key) ? 3 : 0; // 上季霸主开局全维微优势
@@ -878,31 +881,49 @@ function renderKeqing(){
       let j=null; try{ j=JSON.parse(txt.match(/\{[\s\S]*\}/)[0]); }catch(e){}
       const choice = j && j.choice===1 ? 1 : 0;
       r.textContent = `客卿决定${choice===0?'尽心办':'取巧办'}：${(j&&j.reason)||''}`;
-      await completeTask(t, choice, true);
+      await startTask(t, choice, true);
       renderAll();
     }catch(e){ r.textContent = '客卿失手：'+e.message; }
   };
 }
-async function completeTask(task, choiceIdx, viaKeqing){
+async function startTask(task, choiceIdx){
+  if(!requirePlay()) return;
+  if(busy) return; busy = true; showLoading('领 差');
+  try{
+    const ri = rankIdxOf(player.prestige);
+    const limit = ri>=6 ? 2 : 1;
+    const mine = await dbRead('player_tasks', q=>q.eq('token',player.token).eq('xun',nation.xun));
+    if(mine.length >= limit){
+      busy=false; hideLoading();
+      toast(limit>1?'本旬两件差事已领满':'本旬差事已领满——欲领双差，须升至上大夫');
+      return;
+    }
+    if(mine.some(r=>r.task_idx===tasks.indexOf(task))){ busy=false; hideLoading(); toast('此差已在办'); return; }
+    const hours = TASK_HOURS(task);
+    const { data:ins, error:ie } = await cloud.database.from('player_tasks').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, task_idx:tasks.indexOf(task), title:task.title, dim:task.dim, reward:task.reward, war_side:task.war_side||null, choice:choiceIdx, ends_at:new Date(Date.now()+hours*3600000).toISOString()}).select();
+    if(ie) throw ie;
+    task._pt = ins && ins[0];
+    toast('差事已开工——约 '+(hours>=24?(hours/24)+' 天':hours+' 小时')+'后可验收；期间可理今日朝务、上书、推方略');
+    renderTasks();
+  }catch(e){ toast('领差失败：'+(e.message||'未知错误')); }
+  hideLoading(); busy = false;
+}
+async function settleTask(row, viaKeqing){
   if(!requirePlay()) return;
   if(busy) return; busy = true; showLoading('办 差 中');
   try{
     // 官职差事上限：上大夫领双差，其余每旬一件
-    const ri = rankIdxOf(player.prestige);
-    const limit = ri>=6 ? 2 : 1;
-    const doneRows = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','task'));
-    if(doneRows.length >= limit){
-      busy=false; hideLoading();
-      toast(limit>1?'本旬两件差事已办满':'本旬差事已办满——欲领双差，须升至上大夫');
-      return;
-    }
-    const ok = choiceIdx===0 ? (Math.random()<0.78) : true; // 尽心办有风险；循例办必成（GDD-S12 勘误采纳）
-    const amt = ok ? task.reward : Math.ceil(task.reward*0.4);
-    const dimKey = task.dim;
+    // 重复验收守卫（配额已在开工时核验）
+    const cur = (await dbRead('player_tasks', q=>q.eq('id', row.id)))[0];
+    if(!cur || cur.status!=='running'){ busy=false; hideLoading(); toast('此差已验收或已不在办'); return; }
+    if(new Date(cur.ends_at) > new Date()){ busy=false; hideLoading(); toast('工时未到——差事仍在办理中'); return; }
+    const ok = row.choice===0 ? (Math.random()<0.78) : true; // 尽心办有风险；循例办必成（GDD-S12 勘误采纳）
+    const amt = ok ? row.reward : Math.ceil(row.reward*0.4);
+    const dimKey = row.dim;
     // 会战推进（秦攻 +，楚守 −；三节点依次攻防，账本在秦行）
     let warNote = '';
-    if(task.war_side && warState && warState.active && (player.nation_key===warState.attacker || player.nation_key===warState.defender)){
-      const delta = task.war_side==='attack' ? amt : -amt;
+    if(row.war_side && warState && warState.active && (player.nation_key===warState.attacker || player.nation_key===warState.defender)){
+      const delta = row.war_side==='attack' ? amt : -amt;
       const { data:wr, error:we } = await cloud.database.rpc('bump_war', { p_delta:delta });
       if(we) throw we;
       if(!wr || !wr.active){ busy=false; hideLoading(); toast('战事已结束'); return; }
@@ -910,7 +931,7 @@ async function completeTask(task, choiceIdx, viaKeqing){
       let np = wr.progress;
       let node = wr.node||0;
       warState.progress = np; warState.node = node;
-      if(np>=100 && task.war_side==='attack'){
+      if(np>=100 && row.war_side==='attack'){
         // 攻陷当前节点
         const fallen = getWarNodes(warState.defender)[node]||'边城';
         if(node>=2){ // 王都陷落 → 攻方大胜
@@ -940,7 +961,7 @@ async function completeTask(task, choiceIdx, viaKeqing){
         await cloud.database.from('nations').update({war_progress:np, updated_at:new Date().toISOString()}).eq('id',q.id);
         warState.progress = np; warState.node = node;
         sfx('war');
-      warNote = task.war_side==='attack' ? '，攻势推进' : '，守御奏效';
+      warNote = row.war_side==='attack' ? '，攻势推进' : '，守御奏效';
       }
     }
     // 国力更新（S4：原子自增）
@@ -959,14 +980,15 @@ async function completeTask(task, choiceIdx, viaKeqing){
       token:player.token, nation_key:player.nation_key, xun:nation.xun,
       decree_id:(decree&&decree.id)||null,
       action_type:'task', dim:dimKey, amount:amt,
-      note:`${viaKeqing?'【客卿代笔】':''}${task.title}·${choiceIdx===0?'尽心办':'循例办'}${ok?'·成':'·失'}${warNote}`,
+      note:`${viaKeqing?'【客卿代笔】':''}${row.title}·${row.choice===0?'尽心办':'循例办'}${ok?'·成':'·失'}${warNote}`,
     });
-    // 标记任务完成（本地）
-    task.done = true; task.result = {ok, amt, gain};
+    await cloud.database.from('player_tasks').update({status:'done'}).eq('id',row.id);
+    // 本地结果
+    row.done = true; row.result = {ok, amt, gain};
     renderAll();
     sfx(ok?'ok':'fail');
     if(newRank!==oldRank){ toast(`官升一级：${newRank}！`); sfx('rank'); $('dims').classList.add('glow'); setTimeout(()=>$('dims').classList.remove('glow'),1300); }
-  }catch(e){ toast('办差失败：'+(e.message||'未知错误')); }
+  }catch(e){ toast('验收失败：'+(e.message||'未知错误')); }
   hideLoading(); busy = false;
 }
 
@@ -975,6 +997,17 @@ async function nextXun(){
   if(busy) return; busy = true;
   showLoading('君 上 定 策');
   try{
+    // 旬真时钟：一旬=现实 7 天（localStorage lgc_xun_days 可临时调速）
+    if(nation.xun_started_at){
+      const readyAt = new Date(nation.xun_started_at).getTime() + XUN_MS;
+      if(Date.now() < readyAt){
+        const leftMs = readyAt - Date.now();
+        const d2 = Math.floor(leftMs/86400000), h2 = Math.floor(leftMs%86400000/3600000);
+        busy=false; hideLoading();
+        toast('君上仍在本旬施政——下一旬还需 '+d2+' 天 '+h2+' 小时（今日朝务、差事验收、上书方略都还有得忙）');
+        return;
+      }
+    }
     // 旬 +1（S4：原子自增，防双人同进跳旬）
     const { data:nx, error:e1 } = await cloud.database.rpc('advance_xun', { p_nation:nation.id });
     if(e1) throw e1;
@@ -1103,23 +1136,49 @@ function renderDecree(){
       ()=>toast('抄录失败（浏览器不允许）'));
   };
 }
-function renderTasks(){
+async function renderTasks(){
   if(!tasks || !tasks.length){ $('taskBox').innerHTML='<div class="hint">本旬暂无差事。</div>'; return; }
-  $('taskBox').innerHTML = tasks.map((t,i)=>{
+  let mine = [];
+  if(player && player.token && !spectate){ try{ mine = await dbRead('player_tasks', q=>q.eq('token',player.token).eq('xun',nation.xun)); }catch(e){} }
+  let clock = '';
+  if(nation && nation.xun_started_at){
+    const readyAt = new Date(nation.xun_started_at).getTime() + XUN_MS;
+    const leftMs = readyAt - Date.now();
+    if(leftMs > 0){ const d2 = Math.floor(leftMs/86400000), h2 = Math.floor(leftMs%86400000/3600000);
+      clock = '<div class="hint">本旬朝政共 ' + Math.round(XUN_MS/86400000) + ' 日 · 距下一旬开启还有 <b>' + d2 + '</b> 天 <b>' + h2 + '</b> 小时——差事办理、每日朝务、上书方略，逐日打理</div>';
+    } else { clock = '<div class="hint">本旬已满——君上将颁新诏，可进下一旬</div>'; }
+  }
+  $('taskBox').innerHTML = clock + tasks.map((t,i)=>{
     const opt = t.choices || [{c:'尽心办'},{c:'循例办，稳成而功半'}];
-    return `<div class="task">
-      <div class="thead"><span><span class="tname">${t.war_side?'⚔ ':''}${esc(t.title)}</span>
-        <span class="tag ${t.type==='武'?'wu':'wen'}">${t.type==='武'?'武事':'文事'}</span></span>
-        <small style="color:var(--ink-dim)">宜利：${DIMS.find(d=>d.k===t.dim).n}+${t.reward}${t.war_side?(t.war_side==='attack'?' · 推进战线':' · 守住战线'):''}</small></div>
-      <div class="tdesc">${esc(t.desc)}</div>
-      ${t.done
-        ? `<div class="result ${t.result.ok?'ok':'fail'}">${t.result.ok?'事成':'事有蹉跎'} —— 国力+${t.result.amt}，声望+${t.result.gain}</div>`
-        : `<div class="choices">${opt.map((o,ci)=>`<button class="minor" data-task="${i}" data-choice="${ci}">${esc(o.c)}</button>`).join('')}</div>`}
-    </div>`;
+    const row = mine.find(r=>r.task_idx===i);
+    let act;
+    if(row){
+      if(row.status==='running'){
+        const leftT = new Date(row.ends_at) - Date.now();
+        if(leftT <= 0){
+          act = '<button class="minor" data-settle="'+i+'" style="border-color:var(--seal);color:#d49a8a">验 收（差已办毕）</button>';
+        } else {
+          const total = new Date(row.ends_at) - new Date(row.started_at);
+          const pct = Math.max(0, Math.min(100, Math.round((total-leftT)/total*100)));
+          const lh = Math.ceil(leftT/3600000);
+          act = '<div class="wbar" style="margin:6px 0 2px"><div class="fill-q" style="width:'+pct+'%"></div></div><div class="hint">办理中（'+(row.choice===0?'尽心办':'循例办')+'）· 约剩 '+(lh>=24?(lh/24).toFixed(1)+' 天':lh+' 小时')+'可验收</div>';
+        }
+      } else {
+        act = '<div class="result ok">已验收归档（详见居官履历）</div>';
+      }
+    } else {
+      act = '<div class="choices">'+opt.map((o,ci)=>'<button class="minor" data-task="'+i+'" data-choice="'+ci+'">'+esc(o.c)+'</button>').join('')+'</div><div class="hint">开工需时：'+TASK_HOURS(t)+' 小时（同旬可办 '+((rankIdxOf(player.prestige)>=6)?'两':'一')+' 件）</div>';
+    }
+    return '<div class="task">'
+      + '<div class="thead"><span><span class="tname">'+(t.war_side?'⚔ ':'')+esc(t.title)+'</span>'
+      + '<span class="tag '+(t.type==='武'?'wu':'wen')+'">'+(t.type==='武'?'武事':'文事')+'</span></span>'
+      + '<small style="color:var(--ink-dim)">宜利：'+DIMS.find(d=>d.k===t.dim).n+'+'+t.reward+(t.war_side?(t.war_side==='attack'?' · 推进战线':' · 守住战线'):'')+'</small></div>'
+      + '<div class="tdesc">'+esc(t.desc)+'</div>'
+      + act + '</div>';
   }).join('');
-  $('taskBox').querySelectorAll('button[data-task]').forEach(b=>{
-    b.onclick = ()=> completeTask(tasks[+b.dataset.task], +b.dataset.choice);
-  });
+  $('taskBox').querySelectorAll('button[data-task]').forEach(b=>{ b.onclick = ()=> startTask(tasks[+b.dataset.task], +b.dataset.choice); });
+  $('taskBox').querySelectorAll('button[data-settle]').forEach(b=>{ b.onclick = ()=> settleTask(mine.find(r=>r.task_idx===+b.dataset.settle)); });
+  renderDaily();
 }
 function renderMemo(){
   const ri = rankIdxOf(player.prestige);
@@ -1329,7 +1388,7 @@ async function renderNews(){
   $('newsBox').innerHTML = rosterHtml + warHtml + dipHtml + histHtml + newsHtml;
   const bm = $('btnMediate'); if(bm) bm.onclick = mediate;
 }
-function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderKeqing(); renderLog().catch(()=>{}); renderNews().catch(()=>{}); renderFang().catch(()=>{}); renderMerit().catch(()=>{}); }
+function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderKeqing(); renderLog().catch(()=>{}); renderNews().catch(()=>{}); renderFang().catch(()=>{}); renderMerit().catch(()=>{}); ensureDailyEdict(); }
 
 /* ============ 开局 ============ */
 let selNation = null;
@@ -1509,6 +1568,95 @@ async function doLogout(){
   try{ await cloud.auth.signOut(); }catch(e){}
   location.reload();
 }
+/* ============ 每日朝务 + 君上晨谕（旬内 7 日逐日活动） ============ */
+const DAILY_EVENTS = [
+ {t:'晨议国是', d:'君上召近臣晨议，问及当下急务。', o:[{c:'进言理财',dim:'economy',v:1},{c:'进言练兵',dim:'military',v:1}]},
+ {t:'市井巡视', d:'微服行于市，见民生百态。', o:[{c:'访察商肆',dim:'economy',v:1},{c:'慰问里闾',dim:'livelihood',v:1}]},
+ {t:'驿馆来客', d:'有游士自陈献策，求一见。', o:[{c:'虚心听策',dim:'culture',v:1},{c:'考校兵事',dim:'military',v:1}]},
+ {t:'边关塘报', d:'边将呈报近日哨探情形。', o:[{c:'犒赏哨卒',dim:'military',v:1},{c:'增修烽燧',dim:'military',v:1}]},
+ {t:'仓廪点检', d:'有司呈仓廪簿册，请示处置。', o:[{c:'核减虚耗',dim:'economy',v:1},{c:'平价赈粜',dim:'livelihood',v:1}]},
+ {t:'学宫讲问', d:'学宫博士讲经，邀卿观礼。', o:[{c:'往观讲礼',dim:'culture',v:1},{c:'与论时政',dim:'diplomacy',v:1}]},
+ {t:'邦交文书', d:'有邻国书函送达，待卿过目。', o:[{c:'以礼相答',dim:'diplomacy',v:1},{c:'细察其意',dim:'diplomacy',v:1}]},
+ {t:'工造查验', d:'工官请验城郭道路修缮。', o:[{c:'亲往查验',dim:'livelihood',v:1},{c:'督促进度',dim:'economy',v:1}]},
+ {t:'武场校射', d:'军中校射，将佐请卿观礼。', o:[{c:'亲校射艺',dim:'military',v:1},{c:'奖掖锐士',dim:'military',v:1}]},
+ {t:'细作密呈', d:'细作密报邻国动静，真假难辨。', o:[{c:'呈报君上',dim:'diplomacy',v:1},{c:'再探虚实',dim:'military',v:1}]},
+];
+async function renderDaily(){
+  const box = $('dailyBox'); if(!box) return;
+  if(!player || spectate || !nation){ box.innerHTML=''; return; }
+  const today = new Date().toISOString().slice(0,10);
+  let last = null;
+  try{ last = (await dbRead('player_actions', q=>q.eq('token',player.token).eq('action_type','daily').order('created_at',{ascending:false}).limit(1)))[0]; }catch(e){}
+  const didToday = last && (Date.now() - new Date(last.created_at)) < 86400000;
+  const ev = DAILY_EVENTS[(new Date().getDate() + nation.xun*3 + player.token.length) % DAILY_EVENTS.length];
+  let html = '';
+  if(window._dailyEdict){
+    html += '<div class="result ok" style="margin-bottom:10px"><b>君上晨谕</b> · ' + today + '：' + esc(window._dailyEdict) + '</div>';
+  }
+  if(didToday){
+    html += '<div class="panel-title"><span>今 日 朝 务</span><small>日日有朝可上</small></div><div class="hint">今日朝务已毕——明日清晨再来。</div>';
+  } else {
+    html += '<div class="panel-title"><span>今 日 朝 务</span><small>每天一件小事 · 有小收益</small></div>'
+      + '<div class="task"><div class="thead"><span><span class="tname">'+esc(ev.t)+'</span><span class="tag wen">朝务</span></span></div>'
+      + '<div class="tdesc">'+esc(ev.d)+'</div>'
+      + '<div class="choices">'+ev.o.map((o,i)=>'<button class="minor" data-daily="'+i+'">'+esc(o.c)+'</button>').join('')+'</div></div>';
+  }
+  box.innerHTML = html;
+  box.querySelectorAll('button[data-daily]').forEach(b=>{ b.onclick = ()=> doDaily(ev, +b.dataset.daily); });
+}
+async function doDaily(ev, oi){
+  if(!requirePlay()) return;
+  if(busy) return; busy=true; showLoading('理 事');
+  try{
+    const o = ev.o[oi];
+    const { error:de } = await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:o.dim, p_delta:o.v });
+    if(de) throw de;
+    await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'daily', dim:o.dim, amount:o.v, note:'朝务【'+ev.t+'】·'+o.c });
+    toast('已理朝务：'+o.c+'（国力微益）');
+    sfx('ok');
+    renderAll();
+  }catch(e){ toast('朝务失败：'+(e.message||'未知错误')); }
+  hideLoading(); busy=false;
+}
+async function ensureDailyEdict(){
+  if(!player || spectate || !nation) return;
+  const day = new Date().toISOString().slice(0,10);
+  try{
+    const rows = await dbRead('daily_edicts', q=>q.eq('nation_key',player.nation_key).eq('day',day).limit(1));
+    if(rows[0]){ window._dailyEdict = rows[0].content; renderDaily(); return; }
+    const txt = await llmDailyEdict();
+    const finalTxt = txt || templateDailyEdict();
+    const { data:ins, error:ie } = await cloud.database.from('daily_edicts').insert({nation_key:player.nation_key, day, content:finalTxt}).select();
+    if(ie){ const again = await dbRead('daily_edicts', q=>q.eq('nation_key',player.nation_key).eq('day',day).limit(1)); window._dailyEdict = (again[0]&&again[0].content)||finalTxt; }
+    else { window._dailyEdict = (ins&&ins[0]&&ins[0].content)||finalTxt; }
+    renderDaily();
+  }catch(e){ /* 晨谕非关键路径，静默 */ }
+}
+async function llmDailyEdict(){
+  if(!llmReady){ if(Date.now()<(window._llmRetryAt||0)) return null; llmReady=true; }
+  try{
+    if(modelId===undefined) modelId = await listModel();
+    if(!modelId) return null;
+    const meta = NATION_META[player.nation_key];
+    const snapshot = {}; for(const d of DIMS) snapshot[d.n]=nation[d.k];
+    const sys = '你是先秦'+meta.n+'国君主'+meta.m+'。人格：'+(meta.p||'')+' '+(meta.bias||'')+' 每天清晨向臣下发一条简短批语（晨谕）。用先秦语气带你的性格，30-60字，可点评臣下近日作为、催办差事、感慨时局。只输出批语正文，不要任何其他文字。';
+    const user = '国力：'+JSON.stringify(snapshot)+'。旬号：'+nation.xun+'。'+((warState&&warState.active&&(player.nation_key===warState.attacker||player.nation_key===warState.defender))?'国家正处于会战中，晨谕宜谈及战事。':'')+'请发今日晨谕。';
+    const r = await cloud.llm.chat.completions.create({ model:modelId.id, messages:[{role:'system',content:sys},{role:'user',content:user}], stream:false, temperature:0.95, max_tokens:200 });
+    return (r.choices&&r.choices[0]&&r.choices[0].message&&r.choices[0].message.content||'').trim()||null;
+  }catch(e){ return null; }
+}
+function templateDailyEdict(){
+  const meta = NATION_META[player.nation_key];
+  const war = warState && warState.active && (player.nation_key===warState.attacker || player.nation_key===warState.defender);
+  const pool = war ? [
+    '战事方殷，卿等夙夜在公，孤心甚慰。粮秣军械，务须再筹，勿使前线有燃眉之急。',
+    '前线军报频至。凡有怠误军机者，严惩不贷；凡有献策建功者，孤必不忘。',
+  ] : [
+    '卿等各安其位，勤修政事。孤观我国气象，正在卿等手中。',
+    '治国如烹小鲜，火候次第，不可躁进。今日之事今日毕，卿其勉之。',
+  ];
+  return pool[Math.floor(Math.random()*pool.length)];
+}
 (async function boot(){
   // 内核兜底：云服务组件未装载时给出明确指引，不留白屏（build-check 第 3 步要求）
   if(typeof cloud==='undefined' || !cloud){
@@ -1533,6 +1681,7 @@ async function doLogout(){
   $('btnPhoneLogin').onclick = phoneLogin;
   $('btnWbLogin').onclick = wbLogin;
   $('btnSpectate').onclick = ()=>{ spectate=true; startSpectate(); };
+  setInterval(()=>{ if(player&&nation&&!spectate){ try{ renderTasks(); }catch(e){} } }, 60000);
   showLoading('开 卷');
   try{
     await restoreAuth();
