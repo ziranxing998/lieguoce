@@ -1504,6 +1504,13 @@ async function doLogout(){
   location.reload();
 }
 (async function boot(){
+  // 内核兜底：云服务组件未装载时给出明确指引，不留白屏（build-check 第 3 步要求）
+  if(typeof cloud==='undefined' || !cloud){
+    document.body.classList.add('setup-bg');
+    const a=$('auth'); if(a) a.style.display='block';
+    const h=$('authHint'); if(h) h.textContent='卷轴未展：游戏内核（云服务组件）未能装载。请关闭网络代理后按 Ctrl+F5 强刷重试；仍失败请反馈给开发者。';
+    return;
+  }
   // 登录修复：所有按钮绑定必须在任何 await 之前——慢网络下用户会先点按钮
 
   $('soundBtn').onclick = ()=>{ const m = localStorage.getItem('lgc_mute')==='1'; localStorage.setItem('lgc_mute', m?'0':'1'); $('soundBtn').textContent = m?'🔔 音效：开':'🔕 音效：关'; if(!m) return; sfx('ok'); };
