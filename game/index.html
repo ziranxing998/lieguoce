@@ -1130,7 +1130,7 @@ async function submitYian(inpOverride){
 }
 
 async function resetGame(){
-  if(!confirm('弃官重修将清除本机进度（国家级世界状态保留），确定？')) return;
+  if(!confirm('弃官重修将清除本机进度（世界状态保留）。天命已定——国籍不变，仅重新做人。确定？')) return;
   localStorage.removeItem('lgc_token');
   localStorage.removeItem('lgc_memo_'+player.token);
   location.reload();
@@ -1451,14 +1451,29 @@ function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); 
 /* ============ 开局 ============ */
 let selNation = null;
 function renderSetup(){
-  $('nationCards').innerHTML = '<div class="hint" style="padding:12px;line-height:2.2">天命无常——你将<b>随机降生</b>于战国七雄之一。<br>强国有骄横的资本，弱国有求生的智慧。<br>发展经济 · 增殖人口 · 伺机兴兵 · 终图天下。</div>';
+  const origin0 = localStorage.getItem('lgc_origin');
+  if(origin0 && NATION_META[origin0]) $('btnStart').textContent = '重 归 '+NATION_META[origin0].n;
+  else $('btnStart').textContent = '天 命 降 生';
+  $('nationCards').innerHTML = '<div class="hint" style="padding:12px;line-height:2.1">天命按<b>各国人口</b>加权——人口越多，降生概率越大：<br>'
++ '楚 21% · 秦 19% · 齐 17% · 魏 15% · 赵 14% · 燕 8% · 韩 7%<br>'
++ '强国有骄横的资本，弱国有求生的智慧。<br>发展经济 · 增殖人口 · 伺机兴兵 · 终图天下。<br>'
++ (origin0 ? '<b>天命已定</b>：你将重归 '+NATION_META[origin0].n+'——弃官重修不改国籍。</div>' : '<b>天命未定</b>——降生即定，不可重掷。</div>');
   $('btnStart').textContent = '天 命 降 生';
   $('btnStart').disabled = false;
 }
 async function startGame(){
   const name = $('playerName').value.trim() || '无名之士';
-  const keys7 = Object.keys(NATION_META);
-  selNation = keys7[Math.floor(Math.random()*keys7.length)]; // 天命随机降生
+  // 天命按史实人口加权（楚500>秦450>齐400>魏350>赵320>燕180>韩160），且一次定死——弃官重修不改国籍
+  let origin = localStorage.getItem('lgc_origin');
+  if(!(origin && NATION_META[origin])){
+    const BIRTH_W = {chu:500,qin:450,qi:400,wei:350,zhao:320,yan:180,han:160};
+    const tot = Object.values(BIRTH_W).reduce((a,b)=>a+b,0);
+    let roll = Math.random()*tot;
+    origin = 'han';
+    for(const k of Object.keys(BIRTH_W)){ roll -= BIRTH_W[k]; if(roll<=0){ origin = k; break; } }
+    localStorage.setItem('lgc_origin', origin);
+  }
+  selNation = origin;
   showLoading('入 朝');
   try{
     const { data, error } = await cloud.database.from('players').insert({
