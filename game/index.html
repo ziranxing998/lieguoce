@@ -1936,7 +1936,7 @@ function openBuilding(k){
   var body=$('bmBody');
   if(k==='chaotang'){ body.innerHTML=chaotangHtml(); bindChaotang(body); }
   else if(k==='gongdi'){ body.innerHTML='<div class="hint">载入中…</div>'; gongdiHtml(body).catch(e0=>{ $('bmBody').innerHTML='<div class="hint">工地面板异常：'+(e0.message||e0)+'<br>请将本行复制反馈给开发者。</div>'; }); }
-  else if(k==='farm'||k==='forest'||k==='quarry'||k==='goldmine'){ body.innerHTML='<div class="hint">载入中…</div>'; gatherHtml(b).catch(e0=>{ $('bmBody').innerHTML='<div class="hint">采集面板异常：'+(e0.message||e0)+'<br>请将本行复制反馈给开发者。</div>'; }); }
+  else if(k==='farm'||k==='forest'||k==='quarry'||k==='goldmine'){ body.innerHTML='<div class="hint">载入中…</div>'; gatherHtml(body, b).catch(e0=>{ $('bmBody').innerHTML='<div class="hint">采集面板异常：'+(e0.message||e0)+'<br>请将本行复制反馈给开发者。</div>'; }); }
   else if(k==='xuegong'){ academyHtml(body).catch(e0=>{ $('bmBody').innerHTML='<div class="hint">学宫面板异常：'+(e0.message||e0)+'<br>请将本行复制反馈给开发者。</div>'; }); }
   else { body.innerHTML='<div class="hint">载入中…</div>'; officeHtml(b, body); }
   $('bMask').classList.add('on');
@@ -2435,7 +2435,7 @@ const SKILLS = [
 function mySkills(){ try{ return JSON.parse((player&&player.skills)||'[]'); }catch(e){ return []; } }
 function hasSkill(id){ return mySkills().indexOf(id)>=0; }
 function gatherBonus(){ let b=0; if(hasSkill('shennong')) b+=0.30; if(hasSkill('gouxu')) b+=0.15; if(hasSkill('houji')) b+=1.0; return b; }
-async function gatherHtml(b){
+async function gatherHtml(el, b){
   const resK = b.res;
   const resName = (RES.find(x=>x.k===resK)||{n:resK}).n;
   let mine=[]; try{ mine=(await dbRead('player_tasks', q=>q.eq('token',player.token).eq('dim','gather'))).filter(r=>r.status!=='done'||new Date(r.started_at)>new Date(Date.now()-86400000)); }catch(e){}
@@ -2451,15 +2451,15 @@ async function gatherHtml(b){
     h+='<div class="hint">同一时间只能进行一处采集；离开页面也在持续。</div>';
   }
   h+='</div>';
-  body.innerHTML=h;
+  el.innerHTML=h;
   const live=$('gatherLive');
   let tm=null;
   if(live && run){
     const upd=()=>{ const mins=(Date.now()-new Date(run.started_at))/60000; const amt=Math.floor(mins*gatherRateOf(run.war_side)*(run.war_side==='gold'?1:(1+gatherBonus()))); live.textContent='采集中 · 已历 '+Math.floor(mins)+' 分钟 · 约得 '+resName+' '+amt; };
     upd(); tm=setInterval(upd,1000);
   }
-  body.querySelectorAll('button[data-gstart]').forEach(bt=>{ bt.onclick=()=>{ if(tm) clearInterval(tm); startGather(bt.dataset.gstart); }; });
-  body.querySelectorAll('button[data-gstop]').forEach(bt=>{ bt.onclick=()=>{ if(tm) clearInterval(tm); settleGather(run); }; });
+  el.querySelectorAll('button[data-gstart]').forEach(bt=>{ bt.onclick=()=>{ if(tm) clearInterval(tm); startGather(bt.dataset.gstart); }; });
+  el.querySelectorAll('button[data-gstop]').forEach(bt=>{ bt.onclick=()=>{ if(tm) clearInterval(tm); settleGather(run); }; });
   $('bmClose').onclick=()=>{ if(tm) clearInterval(tm); closeBuilding(); };
 }
 async function startGather(resK){
