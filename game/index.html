@@ -109,6 +109,8 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   .spinner{width:34px;height:34px;border:3px solid #3a2f20;border-top-color:var(--bronze);border-radius:50%;
     animation:spin 1s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
+  #soundBtn{position:fixed;left:14px;bottom:14px;z-index:40;opacity:.6;font-size:12px;padding:6px 10px;}
+  #soundBtn:hover{opacity:1;}
   #feedbackBtn{position:fixed;right:14px;bottom:14px;z-index:40;opacity:.75;font-size:12px;padding:6px 12px;}
   #feedbackBtn:hover{opacity:1;}
   #fbMask{position:fixed;inset:0;background:#000000aa;z-index:55;display:none;align-items:center;justify-content:center;}
@@ -148,6 +150,7 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 <body>
 <div id="loading" style="display:none"><div class="spinner"></div><div class="t" id="loadingText">朝 堂 肃 静</div></div>
 <div class="toast" id="toast"></div>
+<button id="soundBtn" type="button">🔔 音效：开</button>
 <button id="feedbackBtn" type="button">上疏（提意见）</button>
 <div id="fbMask">
   <div id="fbPanel">
@@ -250,6 +253,43 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 </div>
 
 <script>
+/* ============ 音效（Web Audio 合成，零外部资源） ============ */
+let audioCtx = null;
+function soundOn(){ return localStorage.getItem('lgc_mute') !== '1'; }
+function ac(){
+  if(!audioCtx) audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  if(audioCtx.state==='suspended') audioCtx.resume();
+  return audioCtx;
+}
+function tone(freq, start, dur, type, vol){
+  const c = ac(); const o = c.createOscillator(); const g = c.createGain();
+  o.type = type||'sine'; o.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, c.currentTime+start);
+  g.gain.exponentialRampToValueAtTime(vol||0.12, c.currentTime+start+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, c.currentTime+start+dur);
+  o.connect(g); g.connect(c.destination);
+  o.start(c.currentTime+start); o.stop(c.currentTime+start+dur+0.05);
+}
+function sfx(name){
+  if(!soundOn()) return;
+  try{
+    if(name==='bell'){ // 诏书送达：钟声
+      tone(220,0,1.6,'sine',0.14); tone(330,0.02,1.2,'sine',0.08); tone(554,0.05,0.5,'triangle',0.05);
+    }else if(name==='ok'){ // 办差成功：上行双音
+      tone(440,0,0.15,'triangle',0.1); tone(587,0.12,0.25,'triangle',0.1);
+    }else if(name==='fail'){ // 办差失败：下行
+      tone(330,0,0.2,'sawtooth',0.06); tone(233,0.15,0.35,'sawtooth',0.06);
+    }else if(name==='drum'){ // 进旬：鼓点
+      tone(90,0,0.25,'sine',0.2); tone(70,0.18,0.3,'sine',0.16);
+    }else if(name==='rank'){ // 升官：琶音
+      [523,659,784,1046].forEach((f,i)=>tone(f,i*0.1,0.3,'triangle',0.09));
+    }else if(name==='horn'){ // 会战爆发：号角
+      tone(147,0,0.9,'sawtooth',0.08); tone(196,0.15,0.9,'sawtooth',0.08); tone(147,0.4,1.1,'sawtooth',0.07);
+    }else if(name==='war'){ // 战线推进
+      tone(196,0,0.2,'square',0.05); tone(262,0.1,0.3,'square',0.05);
+    }
+  }catch(e){}
+}
 /* ============ 上疏（游戏内反馈） ============ */
 function openFeedback(){
   $('fbMask').style.display='flex';
@@ -601,6 +641,7 @@ async function maybeStartWar(){
       const nat = await loadNation(key);
       if(nat) await cloud.database.from('nations').update({last_event:JSON.stringify({xun:(key===player.nation_key?nation.xun:atk.xun), title:NA+NB+'开战', desc:NA+'师东出，兵锋直指'+NB+'境——三座城邑依次攻防。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',nat.id);
     }
+    sfx('horn');
     toast('⚔ '+NA+'伐'+NB+'——会战爆发！');
   }
 }
@@ -891,7 +932,8 @@ async function completeTask(task, choiceIdx, viaKeqing){
         np = Math.max(0, Math.min(100, np));
         await cloud.database.from('nations').update({war_progress:np, updated_at:new Date().toISOString()}).eq('id',q.id);
         warState.progress = np; warState.node = node;
-        warNote = task.war_side==='attack' ? '，攻势推进' : '，守御奏效';
+        sfx('war');
+      warNote = task.war_side==='attack' ? '，攻势推进' : '，守御奏效';
       }
     }
     // 国力更新（S4：原子自增）
@@ -915,7 +957,8 @@ async function completeTask(task, choiceIdx, viaKeqing){
     // 标记任务完成（本地）
     task.done = true; task.result = {ok, amt, gain};
     renderAll();
-    if(newRank!==oldRank){ toast(`官升一级：${newRank}！`); $('dims').classList.add('glow'); setTimeout(()=>$('dims').classList.remove('glow'),1300); }
+    sfx(ok?'ok':'fail');
+    if(newRank!==oldRank){ toast(`官升一级：${newRank}！`); sfx('rank'); $('dims').classList.add('glow'); setTimeout(()=>$('dims').classList.remove('glow'),1300); }
   }catch(e){ toast('办差失败：'+(e.message||'未知错误')); }
   hideLoading(); busy = false;
 }
@@ -940,6 +983,7 @@ async function nextXun(){
     await loadWarState();
     await ensureDecree();
     renderAll();
+    sfx('drum'); sfx('bell');
     toast(`第${nation.xun}旬 · ${decree.source==='llm'?'君上手书':'廷臣代草'}`);
   }catch(e){ toast('进旬失败：'+(e.message||'未知错误')); }
   hideLoading(); busy = false;
@@ -1432,6 +1476,8 @@ async function doLogout(){
   }catch(e){
     showAuth('云服连接失败，请刷新重试');
   }
+  $('soundBtn').onclick = ()=>{ const m = localStorage.getItem('lgc_mute')==='1'; localStorage.setItem('lgc_mute', m?'0':'1'); $('soundBtn').textContent = m?'🔔 音效：开':'🔕 音效：关'; if(!m) return; sfx('ok'); };
+  if(localStorage.getItem('lgc_mute')==='1') $('soundBtn').textContent = '🔕 音效：关';
   $('feedbackBtn').onclick = openFeedback;
   $('fbCancel').onclick = closeFeedback;
   $('fbSend').onclick = submitFeedback;
