@@ -145,6 +145,17 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   .wnode-active{background:#3a1e16;color:#d49a8a;border-color:var(--seal);box-shadow:0 0 10px #a63c2a44;}
   .wnode-future{color:var(--ink-dim);}
   .warrow{color:var(--ink-dim);margin:0 4px;}
+
+/* ---- 城内场景 ---- */
+#sceneView{display:none;max-width:1020px;margin:0 auto 14px}
+#game.scene-mode > .panel{display:none}
+#game.scene-mode #sceneView{display:block}
+#sceneCanvas{width:100%;border:2px solid #5a3228;border-radius:10px;background:#0e0c08;display:block;cursor:pointer}
+#sceneHud{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px}
+#sceneHud .hint{flex:1;min-width:200px}
+#bMask{position:fixed;inset:0;background:rgba(10,8,5,.72);display:none;z-index:60;overflow:auto}
+#bMask.on{display:block}
+#bModal{max-width:560px;margin:6vh auto;background:var(--paper,#f0e4c8);border:2px solid #5a3228;border-radius:12px;padding:18px}
 </style>
 </head>
 <body>
@@ -199,13 +210,28 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 </div>
 
 <div id="game" class="wrap" style="display:none">
+
+<div id="sceneView">
+  <div id="sceneHud">
+    <button class="minor" id="btnToPanels">📜 文 书</button>
+    <button class="minor" id="btnSceneXun">⏭ 下一旬</button>
+    <span class="hint" id="sceneTip">方向键 / WASD 行走 · 走近建筑按 E 或点击进入 · 需读长文书点「文书」</span>
+  </div>
+  <canvas id="sceneCanvas" width="960" height="540"></canvas>
+</div>
+<div id="bMask"><div id="bModal">
+  <div class="panel-title"><span id="bmTitle">—</span><small id="bmSub"></small></div>
+  <div id="bmBody"></div>
+  <div style="text-align:right;margin-top:10px"><button class="minor" id="bmClose">离 开</button></div>
+</div></div>
+
   <div id="guideBox" class="panel" style="display:none;border-color:var(--bronze)"></div>
   <div id="rulesBox" class="panel" style="display:none"></div>
   <div id="topbar">
     <div class="who" id="who"></div>
     <div id="specSwitch" style="display:none"></div>
     <div>
-      <button class="minor" id="btnRules">规则</button>
+      <button class="minor" id="btnToScene">🏮 回 城</button><button class="minor" id="btnRules">规则</button>
       <button class="minor" id="btnLogout" style="display:none">登出</button>
       <button class="minor" id="btnReset" style="border-color:#5a3228;color:#a3705e">弃官重修</button>
     </div>
@@ -1058,9 +1084,9 @@ async function pickMemo(k){
     renderMemo();
   } finally { memoLock = false; }
 }
-async function submitYian(){
+async function submitYian(inpOverride){
   if(!requirePlay()) return;
-  const inp = $('yianInput');
+  const inp = inpOverride || $('yianInput');
   const text = (inp&&inp.value||'').trim();
   if(!text){ toast('议政案不能为空'); return; }
   localStorage.setItem('lgc_yian_'+player.token, JSON.stringify({xun:nation.xun, text, regent:window._regentId===player.id}));
@@ -1140,6 +1166,7 @@ async function renderTasks(){
   if(!tasks || !tasks.length){ $('taskBox').innerHTML='<div class="hint">本旬暂无差事。</div>'; return; }
   let mine = [];
   if(player && player.token && !spectate){ try{ mine = await dbRead('player_tasks', q=>q.eq('token',player.token).eq('xun',nation.xun)); }catch(e){} }
+  window._myTaskRows = mine;
   let clock = '';
   if(nation && nation.xun_started_at){
     const readyAt = new Date(nation.xun_started_at).getTime() + XUN_MS;
@@ -1415,7 +1442,7 @@ async function startGame(){
     localStorage.setItem('lgc_memo_'+player.token, '[]');
     document.body.classList.remove('setup-bg');
     $('setup').style.display='none'; $('game').style.display='block';
-    await enterWorld();
+    await enterWorld(); try{ enterScene(); }catch(e){}
   }catch(e){ toast('入朝失败：'+(e.message||'未知错误')); }
   hideLoading();
 }
@@ -1468,7 +1495,7 @@ async function enterLoggedIn(uid){
       document.body.classList.remove('setup-bg');
       $('auth').style.display='none'; $('setup').style.display='none'; $('game').style.display='block';
       $('btnLogout').style.display='inline-block'; $('btnLogout').textContent='登出';
-      await enterWorld();
+      await enterWorld(); try{ enterScene(); }catch(e){}
     }else{
       document.body.classList.remove('setup-bg');
       $('auth').style.display='none'; renderSetup(); $('setup').style.display='block';
@@ -1657,6 +1684,231 @@ function templateDailyEdict(){
   ];
   return pool[Math.floor(Math.random()*pool.length)];
 }
+/* ============ 城内场景（可操控角色 + 建筑互动） ============ */
+const SCENE_BUILDINGS = [
+ {k:'chaotang', name:'朝堂', ch:'朝', x:390, y:70,  w:190, h:120, sub:'面君 · 诏书 · 上书'} ,
+ {k:'junying',  name:'军营', ch:'军', x:60,  y:240, w:150, h:110, dim:'military'},
+ {k:'shiji',    name:'市集', ch:'市', x:750, y:240, w:150, h:110, dim:'economy'},
+ {k:'gongfang', name:'工坊', ch:'工', x:60,  y:410, w:150, h:105, dim:'livelihood'},
+ {k:'xuegong',  name:'学宫', ch:'学', x:750, y:410, w:150, h:105, dim:'culture'},
+ {k:'yizhan',   name:'驿站', ch:'驿', x:405, y:330, w:150, h:100, dim:'diplomacy'},
+];
+function bDoor(b){ return {x:b.x + b.w/2, y:b.y + b.h + 14}; }
+let sceneActive=false, sceneKeys={}, sceneTarget=null, scenePhase=0, sceneNear=null, sceneLast=0;
+function sceneBuildingOf(k){ return SCENE_BUILDINGS.find(b=>b.k===k); }
+function todayDailyBuilding(){
+  const ev = DAILY_EVENTS[(new Date().getDate() + nation.xun*3 + player.token.length) % DAILY_EVENTS.length];
+  return ev.o[0].dim || 'economy';
+}
+function dailyEventToday(){ return DAILY_EVENTS[(new Date().getDate() + nation.xun*3 + player.token.length) % DAILY_EVENTS.length]; }
+function enterScene(){
+  if(sceneActive) return; sceneActive=true;
+  var g=document.getElementById('game'); if(g) g.classList.add('scene-mode');
+  updateSceneHud();
+  requestAnimationFrame(sceneLoop);
+}
+function exitScene(){
+  sceneActive=false;
+  var g=document.getElementById('game'); if(g) g.classList.remove('scene-mode');
+}
+function updateSceneHud(){
+  var el=$('sceneTip'); if(!el||!nation) return;
+  var t='';
+  if(nation.xun_started_at){
+    var leftMs = new Date(nation.xun_started_at).getTime()+XUN_MS-Date.now();
+    if(leftMs>0){ var d2=Math.floor(leftMs/86400000), h2=Math.floor(leftMs%86400000/3600000); t='本旬还余 '+d2+' 天 '+h2+' 小时'; }
+    else t='本旬已满，可进下一旬';
+  }
+  var marks=sceneMarks();
+  if(marks.settle) t+=' · 有差事待验收';
+  el.textContent=t;
+}
+function sceneMarks(){
+  var mine=window._myTaskRows||[];
+  var settle=mine.some(r=>r.status==='running' && new Date(r.ends_at)<=new Date());
+  var dailyDim = nation? todayDailyBuilding() : null;
+  return {settle:settle, dailyDim:dailyDim};
+}
+function sceneLoop(ts){
+  if(!sceneActive) return;
+  var cv=$('sceneCanvas'); if(!cv){ requestAnimationFrame(sceneLoop); return; }
+  var ctx=cv.getContext('2d');
+  var dt=Math.min(50, ts-sceneLast||16); sceneLast=ts; scenePhase+=dt/180;
+  var sp=0.16*dt, dx=0, dy=0;
+  if(sceneKeys['w']||sceneKeys['arrowup'])dy-=1; if(sceneKeys['s']||sceneKeys['arrowdown'])dy+=1;
+  if(sceneKeys['a']||sceneKeys['arrowleft'])dx-=1; if(sceneKeys['d']||sceneKeys['arrowright'])dx+=1;
+  var P=window._scenePlayer;
+  if(P){
+    if(dx||dy){ sceneTarget=null; var l=Math.sqrt(dx*dx+dy*dy); P.x+=dx/l*sp; P.y+=dy/l*sp; P.facing=dx<0?-1:(dx>0?1:P.facing); P.moving=true; }
+    else if(sceneTarget){
+      var tx=sceneTarget.x-P.x, ty=sceneTarget.y-P.y, dist=Math.sqrt(tx*tx+ty*ty);
+      if(dist<6){ sceneTarget=null; P.moving=false; if(sceneTargetBuild){ var b=sceneTargetBuild; sceneTargetBuild=null; openBuilding(b.k); } }
+      else { P.x+=tx/dist*sp; P.y+=ty/dist*sp; P.facing=tx<0?-1:(tx>0?1:P.facing); P.moving=true; }
+    } else P.moving=false;
+    P.x=Math.max(16,Math.min(944,P.x)); P.y=Math.max(180,Math.min(524,P.y));
+    for(const b of SCENE_BUILDINGS){
+      if(P.x>b.x-6 && P.x<b.x+b.w+6 && P.y>b.y-6 && P.y<b.y+b.h+34){
+        if(dx>0) P.x=b.x-7; if(dx<0) P.x=b.x+b.w+7;
+        if(dy>0) P.y=b.y-7; if(dy<0) P.y=b.y+b.h+35;
+      }
+    }
+  }
+  sceneNear=null;
+  if(P){ var best=1e9; for(const b of SCENE_BUILDINGS){ var d0=bDoor(b); var dd=(P.x-d0.x)*(P.x-d0.x)+(P.y-d0.y)*(P.y-d0.y); if(dd<70*70 && dd<best){ best=dd; sceneNear=b; } } }
+  drawScene(ctx);
+  requestAnimationFrame(sceneLoop);
+}
+var sceneTargetBuild=null;
+function drawScene(ctx){
+  ctx.clearRect(0,0,960,540);
+  ctx.fillStyle='#d9c9a2'; ctx.fillRect(0,0,960,540);
+  ctx.strokeStyle='#c9b58c'; ctx.lineWidth=1;
+  for(var gy=200; gy<540; gy+=34){ ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(960,gy); ctx.stroke(); }
+  ctx.fillStyle='#cbb488'; ctx.fillRect(300,190,360,340);
+  ctx.fillStyle='#c2ab7e'; ctx.fillRect(420,190,120,340);
+  var marks=sceneMarks();
+  for(const b of SCENE_BUILDINGS){ drawBuilding(ctx,b,marks); }
+  drawFigure(ctx, 300, 236, '#7a4a2a', '卒');
+  drawFigure(ctx, 660, 236, '#7a4a2a', '卒');
+  drawFigure(ctx, 470, 226, '#a63c2a', '君');
+  var P=window._scenePlayer;
+  if(P) drawPlayer(ctx,P);
+  if(sceneNear){
+    var d0=bDoor(sceneNear);
+    ctx.strokeStyle='#a63c2a'; ctx.lineWidth=2; ctx.strokeRect(sceneNear.x-3, sceneNear.y-3, sceneNear.w+6, sceneNear.h+6);
+    ctx.fillStyle='#5a3228'; ctx.font='14px serif'; ctx.textAlign='center';
+    ctx.fillText('按 E 或点击进入 · '+sceneNear.name, d0.x, d0.y+22);
+  }
+}
+function drawBuilding(ctx,b,marks){
+  ctx.fillStyle='#8a6f4d'; ctx.fillRect(b.x,b.y+30,b.w,b.h-30);
+  ctx.fillStyle='#6e5637'; ctx.fillRect(b.x+b.w/2-16, b.y+b.h-4, 32, 20);
+  ctx.fillStyle='#39485a';
+  ctx.beginPath(); ctx.moveTo(b.x-12,b.y+34); ctx.lineTo(b.x+b.w/2,b.y-8); ctx.lineTo(b.x+b.w+12,b.y+34); ctx.closePath(); ctx.fill();
+  ctx.fillStyle='#2c3947'; ctx.fillRect(b.x-12,b.y+28,b.w+24,7);
+  ctx.strokeStyle='#5a3228'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(b.x+b.w-18,b.y+6); ctx.lineTo(b.x+b.w-18,b.y-30); ctx.stroke();
+  ctx.fillStyle='#a63c2a'; ctx.fillRect(b.x+b.w-18,b.y-30,26,20);
+  ctx.fillStyle='#f5e6d0'; ctx.font='13px serif'; ctx.textAlign='center'; ctx.fillText(b.ch, b.x+b.w-5, b.y-15);
+  ctx.fillStyle='#4a3a26'; ctx.font='13px serif'; ctx.fillText(b.name, b.x+b.w/2, b.y+b.h+30);
+  var hasDaily = marks.dailyDim && b.dim===marks.dailyDim;
+  if(hasDaily){ ctx.fillStyle='#c8641e'; ctx.font='bold 17px serif'; ctx.fillText('❗', b.x+b.w/2+40, b.y-2); }
+  if(b.k==='chaotang' && window._dailyEdict){ ctx.fillStyle='#7a5a1e'; ctx.font='12px serif'; ctx.fillText('有晨谕', b.x+b.w/2, b.y-14); }
+  var mine=window._myTaskRows||[];
+  if(b.dim && mine.some(r=>r.status==='running' && new Date(r.ends_at)<=new Date())){ ctx.fillStyle='#2e7d32'; ctx.font='bold 17px serif'; ctx.fillText('✓', b.x+b.w/2-40, b.y-2); }
+}
+function drawFigure(ctx,x,y,robe,ch){
+  var bob=Math.sin(scenePhase*2+x)*1.5;
+  ctx.fillStyle=robe; ctx.fillRect(x-7,y-16+bob,14,20);
+  ctx.fillStyle='#e8c8a0'; ctx.beginPath(); ctx.arc(x,y-22+bob,6,0,7); ctx.fill();
+  ctx.fillStyle='#333'; ctx.fillRect(x-6,y-28+bob,12,3);
+  ctx.fillStyle='#f5e6d0'; ctx.font='10px serif'; ctx.textAlign='center'; ctx.fillText(ch,x,y-2+bob);
+}
+function drawPlayer(ctx,P){
+  var step=P.moving?Math.sin(scenePhase*6)*4:0;
+  var fx=P.facing||1;
+  ctx.fillStyle='#2c4a6e';
+  ctx.fillRect(P.x-8,P.y-18,16,22);
+  ctx.fillStyle='#24405e'; ctx.fillRect(P.x+(fx>0?-10:6),P.y-14,4,12);
+  ctx.fillStyle='#e8c8a0'; ctx.beginPath(); ctx.arc(P.x+fx*2,P.y-24,6.5,0,7); ctx.fill();
+  ctx.fillStyle='#333'; ctx.beginPath(); ctx.arc(P.x+fx*2,P.y-27,6.5,Math.PI,0); ctx.fill();
+  ctx.fillRect(P.x+fx*2-6,P.y-28,12,2);
+  ctx.strokeStyle='#24405e'; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.moveTo(P.x-4,P.y+4); ctx.lineTo(P.x-4+step,P.y+12); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(P.x+4,P.y+4); ctx.lineTo(P.x+4-step,P.y+12); ctx.stroke();
+}
+function openBuilding(k){
+  var b=sceneBuildingOf(k); if(!b) return;
+  if(!player || spectate){ toast('观政模式只能看——登录入朝方可行事'); return; }
+  $('bmTitle').textContent=b.name; $('bmSub').textContent=b.sub||('经办 '+b.dim+' 之务');
+  var body=$('bmBody');
+  if(k==='chaotang'){ body.innerHTML=chaotangHtml(); bindChaotang(body); }
+  else { body.innerHTML='<div class="hint">载入中…</div>'; officeHtml(b, body); }
+  $('bMask').classList.add('on');
+  sfx('ok');
+}
+function closeBuilding(){ $('bMask').classList.remove('on'); }
+function chaotangHtml(){
+  var h='';
+  h+='<div class="result ok" style="margin-bottom:10px"><b>君上晨谕</b>'+(window._dailyEdict?(' · '+esc(window._dailyEdict)):'：君上今日尚未发谕')+'</div>';
+  if(decree){ h+='<div class="tdesc" style="margin-bottom:8px">【国策诏】'+esc(decree.text||'')+'</div>'; if(decree.quote) h+='<div class="hint">君心参悟：'+esc(decree.quote)+'</div>'; }
+  else h+='<div class="hint">本旬诏书未领——晨间朝会时颁布。</div>';
+  h+='<div style="margin:10px 0 4px"><b>上 书</b>（旬末上书最能影响君上）</div>';
+  h+='<div class="memorial-opts">'+MEMORIALS.map(m=>'<span class="memo '+(memoChoices.includes(m.k)?'sel':'')+'" data-mk="'+m.k+'">【'+m.t+'】'+esc(m.d)+'</span>').join('')+'</div>';
+  h+='<div id="ctYian"></div>';
+  return h;
+}
+function bindChaotang(body){
+  body.querySelectorAll('.memo').forEach(el=>{ el.onclick=()=>{ pickMemo(el.dataset.mk); openBuilding('chaotang'); }; });
+  var y=body.querySelector('#ctYian');
+  if(rankIdxOf(player.prestige)>=4){
+    y.innerHTML='<div style="margin-top:8px"><b>议政案</b>（大夫亲笔，君上置顶裁夺）</div><div style="display:flex;gap:6px;margin-top:6px"><input type="text" id="yianIn" maxlength="40" placeholder="一句国策建议（40字内）" style="flex:1"><button class="minor" id="yianGo">呈 案</button></div>';
+    y.querySelector('#yianGo').onclick=()=>{ submitYian(y.querySelector('#yianIn')); setTimeout(()=>openBuilding('chaotang'),300); };
+  } else y.innerHTML='<div class="hint">议政案须下大夫以上——努力积声望。</div>';
+}
+async function officeHtml(b, body){
+  var mine=[];
+  try{ mine=await dbRead('player_tasks', q=>q.eq('token',player.token).eq('xun',nation.xun)); }catch(e){}
+  window._myTaskRows=mine;
+  var list=tasks.filter(t=>t.dim===b.dim);
+  var h='';
+  if(!list.length) h+='<div class="hint">此处今日无差事——去别处看看，或读「文书」面板。</div>';
+  list.forEach(t=>{
+    var i=tasks.indexOf(t); var row=mine.find(r=>r.task_idx===i);
+    h+='<div class="task"><div class="thead"><span><span class="tname">'+(t.war_side?'⚔ ':'')+esc(t.title)+'</span>'
+      +'<span class="tag '+(t.type==='武'?'wu':'wen')+'">'+(t.type==='武'?'武事':'文事')+'</span></span>'
+      +'<small style="color:var(--ink-dim)">宜利：'+DIMS.find(d=>d.k===t.dim).n+'+'+t.reward+'</small></div>'
+      +'<div class="tdesc">'+esc(t.desc)+'</div>';
+    if(row){
+      if(row.status==='running'){
+        var leftT=new Date(row.ends_at)-Date.now();
+        if(leftT<=0) h+='<button class="minor" data-settle="'+row.id+'" style="border-color:var(--seal);color:#d49a8a">验 收（差已办毕）</button>';
+        else { var lh=Math.ceil(leftT/3600000); h+='<div class="hint">办理中 · 约剩 '+(lh>=24?(lh/24).toFixed(1)+' 天':lh+' 小时')+'可验收</div>'; }
+      } else h+='<div class="result ok">已验收归档</div>';
+    } else {
+      h+='<div class="choices"><button class="minor" data-task="'+i+'" data-choice="0">尽心办（需 '+TASK_HOURS(t)+' 小时）</button><button class="minor" data-task="'+i+'" data-choice="1">循例办（稳成功半）</button></div>';
+    }
+    h+='</div>';
+  });
+  var ev=dailyEventToday();
+  if(ev && b.dim===todayDailyBuilding()){
+    h+='<div class="task"><div class="thead"><span><span class="tname">❗ 今日朝务：'+esc(ev.t)+'</span><span class="tag wen">朝务</span></span></div><div class="tdesc">'+esc(ev.d)+'</div>';
+    h+='<div class="choices">'+ev.o.map((o,ci)=>'<button class="minor" data-daily="'+ci+'">'+esc(o.c)+'</button>').join('')+'</div></div>';
+  }
+  body.innerHTML=h;
+  body.querySelectorAll('button[data-task]').forEach(bt=>{ bt.onclick=()=>{ startTask(tasks[+bt.dataset.task], +bt.dataset.choice); setTimeout(()=>openBuilding(b.k),400); }; });
+  body.querySelectorAll('button[data-settle]').forEach(bt=>{ bt.onclick=()=>{ var r=(window._myTaskRows||[]).find(x=>x.id===+bt.dataset.settle); if(r) settleTask(r); setTimeout(()=>openBuilding(b.k),800); }; });
+  body.querySelectorAll('button[data-daily]').forEach(bt=>{ bt.onclick=()=>{ doDaily(ev, +bt.dataset.daily); setTimeout(()=>openBuilding(b.k),600); }; });
+}
+function initSceneInput(){
+  var cv=$('sceneCanvas');
+  window.addEventListener('keydown',e=>{
+    if(!sceneActive) return;
+    var k=e.key.toLowerCase();
+    if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+    sceneKeys[k]=true;
+    if(k==='e' && sceneNear) openBuilding(sceneNear.k);
+  });
+  window.addEventListener('keyup',e=>{ sceneKeys[e.key.toLowerCase()]=false; });
+  cv.addEventListener('click',e=>{
+    if(!sceneActive) return;
+    var r=cv.getBoundingClientRect();
+    var x=(e.clientX-r.left)*(960/r.width), y=(e.clientY-r.top)*(540/r.height);
+    for(const b of SCENE_BUILDINGS){
+      if(x>b.x-14 && x<b.x+b.w+14 && y>b.y-14 && y<b.y+b.h+40){
+        var d0=bDoor(b);
+        var P=window._scenePlayer;
+        var dd=(P.x-d0.x)*(P.x-d0.x)+(P.y-d0.y)*(P.y-d0.y);
+        if(dd<70*70){ openBuilding(b.k); } else { sceneTarget={x:d0.x,y:d0.y+18}; sceneTargetBuild=b; }
+        return;
+      }
+    }
+    sceneTarget={x:Math.max(16,Math.min(944,x)), y:Math.max(180,Math.min(524,y))}; sceneTargetBuild=null;
+  });
+  $('btnToPanels').onclick=exitScene;
+  $('btnSceneXun').onclick=()=>{ nextXun(); };
+  $('bmClose').onclick=closeBuilding;
+  $('bMask').addEventListener('click',e=>{ if(e.target.id==='bMask') closeBuilding(); });
+}
 (async function boot(){
   // 内核兜底：云服务组件未装载时给出明确指引，不留白屏（build-check 第 3 步要求）
   if(typeof cloud==='undefined' || !cloud){
@@ -1677,11 +1929,13 @@ function templateDailyEdict(){
   $('btnReset').onclick = resetGame;
   $('btnLogout').onclick = ()=>{ if(spectate){ location.reload(); } else { doLogout(); } };
   $('btnRules').onclick = toggleRules;
+  $('btnToScene').onclick = enterScene;
   $('btnSms').onclick = sendSms;
   $('btnPhoneLogin').onclick = phoneLogin;
   $('btnWbLogin').onclick = wbLogin;
   $('btnSpectate').onclick = ()=>{ spectate=true; startSpectate(); };
   setInterval(()=>{ if(player&&nation&&!spectate){ try{ renderTasks(); }catch(e){} } }, 60000);
+  try{ initSceneInput(); window._scenePlayer={x:480,y:470,facing:1,moving:false}; }catch(e){}
   showLoading('开 卷');
   try{
     await restoreAuth();
