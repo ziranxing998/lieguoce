@@ -2112,7 +2112,7 @@ function drawPlayer(ctx,P){
   ctx.beginPath(); ctx.moveTo(P.x+4,P.y+4); ctx.lineTo(P.x+4-step,P.y+12); ctx.stroke();
 }
 function openBuilding(k){
-  window._bmOpen=true;
+  window._bmOpen=true; window._bmKey=k;
   var b=sceneBuildingOf(k); if(!b) return;
   if(!player || spectate){ toast('观政模式只能看——登录入朝方可行事'); return; }
   $('bmTitle').textContent=b.name; $('bmSub').textContent=b.sub||('经办 '+b.dim+' 之务');
@@ -2127,7 +2127,7 @@ function openBuilding(k){
 }
 function closeBuilding(){ $('bMask').classList.remove('on'); }
 function chaotangHtml(){
-  window._bmOpen=false;
+  window._bmOpen=false; window._bmKey=null;
   var h='';
   h+='<div class="result ok" style="margin-bottom:10px"><b>君上晨谕</b>'+(window._dailyEdict?(' · '+esc(window._dailyEdict)):'：君上今日尚未发谕')+'</div>';
   if(decree){ h+='<div class="tdesc" style="margin-bottom:8px">【国策诏】'+esc(decree.text||'')+'</div>'; if(decree.quote) h+='<div class="hint">君心参悟：'+esc(decree.quote)+'</div>'; }
@@ -2268,7 +2268,7 @@ async function settleLabor(row){
   await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'labor', dim:'proj', amount:amt, note:'服役·收集'+resName+'+'+amt+(ok?'':'·事有蹉跎') });
   sfx(ok?'ok':'fail');
   toast('役毕：'+resName+'+'+amt+' 已入国库'+(ok?'':'（事有蹉跎）'));
-  renderAll();
+  renderAll(); updateSceneHud();
 }
 
 async function resLoad(){
@@ -2669,12 +2669,14 @@ async function settleGather(row){
     if(!await perAdd(row.war_side, amt)){ toast('私产账繁忙'); busy=false; hideLoading(); return; }
     await cloud.database.from('player_tasks').update({status:'done'}).eq('id',row.id);
     await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'gather', dim:'gather', amount:amt, note:'采集'+((RES.find(x=>x.k===row.war_side)||{n:row.war_side}).n)+'+'+amt});
-    toast('入库：'+((RES.find(x=>x.k===row.war_side)||{n:''}).n)+'+'+amt);
-    sfx('ok'); renderAll();
+    const bal = (await perLoad())[row.war_side]||0;
+    toast('入库：'+((RES.find(x=>x.k===row.war_side)||{n:''}).n)+'+'+amt+'（私产现有 '+bal+'）');
+    sfx('ok'); renderAll(); updateSceneHud();
+    if(window._bmOpen && window._bmKey && sceneBuildingOf(window._bmKey) && sceneBuildingOf(window._bmKey).res){ openBuilding(window._bmKey); }
   }catch(e){ toast('结算失败：'+(e.message||'未知')); }
   hideLoading(); busy=false;
 }
-function gatherSpotKey(resK){ return resK==='grain'?'farm':(resK==='wood'?'forest':'quarry'); }
+function gatherSpotKey(resK){ return resK==='grain'?'farm':(resK==='wood'?'forest':(resK==='gold'?'goldmine':'quarry')); }
 async function academyHtml(body){
   const mine = mySkills();
   const disc = hasSkill('youjiao')?0.8:1;
