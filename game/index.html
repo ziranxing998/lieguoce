@@ -1791,9 +1791,12 @@ function updateSceneHud(){
     else t='本旬已满，可进下一旬';
   }
   var marks=sceneMarks();
+  var gRun0=(window._myTaskRows||[]).find(x=>x.dim==='gather'&&x.status==='running');
   t+=' · 人口 '+(nation.pop||200)+' 万';
   let pp0={wood:0,grain:0,stone:0}; if(player.resources){ try{ pp0={...pp0,...JSON.parse(player.resources)}; }catch(e){} }
   t+=' · 私产 🪵'+(pp0.wood||0)+' 🌾'+(pp0.grain||0)+' 🪨'+(pp0.stone||0)+' 🪙'+(pp0.gold||0);
+  var gHud=(window._myTaskRows||[]).find(x=>x.dim==='gather'&&x.status==='running');
+  if(gHud) t+=' · ⛏采集中('+((RES.find(x=>x.k===gHud.war_side)||{}).n||'')+')';
   if(marks.settle) t+=' · 有差事待验收';
   el.textContent=t;
 }
@@ -1848,11 +1851,27 @@ function drawScene(ctx){
   drawFigure(ctx, 470, 226, '#a63c2a', '君');
   var P=window._scenePlayer;
   if(P) drawPlayer(ctx,P);
+  if(gRun0){
+    var gSpot0=SCENE_SPOTS.find(x=>x.res===gRun0.war_side);
+    if(gSpot0){
+      var gMins0=(Date.now()-new Date(gRun0.started_at))/60000;
+      var gAmt0=Math.floor(gMins0*gatherRateOf(gRun0.war_side));
+      var gTxt0='⛏ '+((RES.find(x=>x.k===gRun0.war_side)||{}).n||'')+' +'+gAmt0;
+      ctx.font='12px serif';
+      var gW0=ctx.measureText(gTxt0).width+16;
+      var gX0=gSpot0.x+gSpot0.w/2-gW0/2, gY0=gSpot0.y-30;
+      ctx.fillStyle='rgba(166,60,42,.92)';
+      ctx.fillRect(gX0,gY0-14,gW0,20);
+      ctx.fillStyle='#f5e6d0'; ctx.textAlign='center';
+      ctx.fillText(gTxt0, gX0+gW0/2, gY0);
+    }
+  }
   if(sceneNear){
     var d0=bDoor(sceneNear);
     ctx.strokeStyle='#a63c2a'; ctx.lineWidth=2; ctx.strokeRect(sceneNear.x-3, sceneNear.y-3, sceneNear.w+6, sceneNear.h+6);
     ctx.fillStyle='#5a3228'; ctx.font='14px serif'; ctx.textAlign='center';
-    ctx.fillText('按 E 或点击进入 · '+sceneNear.name, d0.x, d0.y+22);
+    var lbl0 = sceneNear.res ? ((gRun0&&gRun0.war_side===sceneNear.res)?'⛏ E 结算采集 · '+sceneNear.name:'E 开始采集'+((RES.find(x=>x.k===sceneNear.res)||{}).n||'')+' · '+sceneNear.name) : ('按 E 或点击进入 · '+sceneNear.name);
+    ctx.fillText(lbl0, d0.x, d0.y+22);
   }
 }
 function drawBuilding(ctx,b,marks){
@@ -2654,7 +2673,7 @@ async function regentRun(manual){
   $('btnPhoneLogin').onclick = phoneLogin;
   $('btnWbLogin').onclick = wbLogin;
   $('btnSpectate').onclick = ()=>{ spectate=true; startSpectate(); };
-  setInterval(()=>{ if(player&&nation&&!spectate){ try{ renderTasks(); }catch(e){} } }, 60000);
+  setInterval(()=>{ if(player&&nation&&!spectate){ try{ renderTasks(); updateSceneHud(); }catch(e){} } }, 60000);
   try{ initSceneInput(); window._scenePlayer={x:480,y:470,facing:1,moving:false}; }catch(e){}
   showLoading('开 卷');
   try{
