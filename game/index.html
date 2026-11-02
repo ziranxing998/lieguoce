@@ -109,6 +109,13 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   .spinner{width:34px;height:34px;border:3px solid #3a2f20;border-top-color:var(--bronze);border-radius:50%;
     animation:spin 1s linear infinite;}
   @keyframes spin{to{transform:rotate(360deg);}}
+  #feedbackBtn{position:fixed;right:14px;bottom:14px;z-index:40;opacity:.75;font-size:12px;padding:6px 12px;}
+  #feedbackBtn:hover{opacity:1;}
+  #fbMask{position:fixed;inset:0;background:#000000aa;z-index:55;display:none;align-items:center;justify-content:center;}
+  #fbPanel{background:var(--panel);border:1px solid var(--bronze);border-radius:8px;padding:18px;width:min(92vw,420px);}
+  #fbPanel textarea{width:100%;height:90px;background:#0f0c08;border:1px solid #3a2f20;color:var(--ink);
+    border-radius:6px;padding:10px;font-family:inherit;font-size:14px;resize:vertical;}
+  #fbPanel textarea:focus{outline:none;border-color:var(--bronze);}
   .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#2a2115;border:1px solid var(--bronze);
     color:var(--ink);padding:10px 20px;border-radius:6px;font-size:14px;z-index:60;display:none;}
   .glow{animation:glow 1.2s ease;}
@@ -141,6 +148,17 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 <body>
 <div id="loading" style="display:none"><div class="spinner"></div><div class="t" id="loadingText">朝 堂 肃 静</div></div>
 <div class="toast" id="toast"></div>
+<button id="feedbackBtn" type="button">上疏（提意见）</button>
+<div id="fbMask">
+  <div id="fbPanel">
+    <div class="panel-title" style="border:none;margin-bottom:8px"><span>上 疏</span><small>直呈开发者 · 尽管直言</small></div>
+    <textarea id="fbText" maxlength="200" placeholder="哪里别扭、哪里看不懂、想要什么——都可以写（200 字内，试玩版全员可见，勿写隐私）"></textarea>
+    <div style="text-align:right;margin-top:10px;display:flex;gap:8px;justify-content:flex-end">
+      <button class="minor" id="fbCancel" type="button">收回</button>
+      <button id="fbSend" type="button">呈 递</button>
+    </div>
+  </div>
+</div>
 
 <div id="auth" class="wrap" style="display:none">
   <h1 style="font-size:34px;color:var(--bronze-l);text-align:center;margin:6vh 0 4px;letter-spacing:.35em">列 国 策</h1>
@@ -229,6 +247,31 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
 </div>
 
 <script>
+/* ============ 上疏（游戏内反馈） ============ */
+function openFeedback(){
+  $('fbMask').style.display='flex';
+  $('fbText').value='';
+  setTimeout(()=>$('fbText').focus(),50);
+}
+function closeFeedback(){ $('fbMask').style.display='none'; }
+async function submitFeedback(){
+  const text = ($('fbText').value||'').trim();
+  if(!text){ toast('空疏不呈——写点什么吧'); return; }
+  $('fbSend').disabled = true;
+  try{
+    await cloud.database.from('player_actions').insert({
+      token: player?.token || guestToken(),
+      nation_key: player?.nation_key || 'none',
+      xun: nation?.xun || 0,
+      action_type:'feedback', dim:null, amount:0,
+      note: String(text).slice(0,200),
+    });
+    closeFeedback();
+    toast('疏已呈递——开发者会亲自过目，多谢！');
+  }catch(e){ toast('呈递失败：'+(e.message||'未知错误')); }
+  $('fbSend').disabled = false;
+}
+
 /* ============ 初始化 ============ */
 if (typeof WorkBuddyCloud === 'undefined') {
   document.body.innerHTML = '<div style="color:#e8dcc8;font-family:serif;text-align:center;padding:60px 20px;line-height:2">' +
@@ -1321,6 +1364,9 @@ async function doLogout(){
   }catch(e){
     showAuth('云服连接失败，请刷新重试');
   }
+  $('feedbackBtn').onclick = openFeedback;
+  $('fbCancel').onclick = closeFeedback;
+  $('fbSend').onclick = submitFeedback;
   $('btnStart').onclick = startGame;
   $('btnNext').onclick = nextXun;
   $('btnReset').onclick = resetGame;
