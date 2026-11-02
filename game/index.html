@@ -1811,6 +1811,7 @@ function sceneLoop(ts){
   var cv=$('sceneCanvas'); if(!cv){ requestAnimationFrame(sceneLoop); return; }
   var ctx=cv.getContext('2d');
   var dt=Math.min(50, ts-sceneLast||16); sceneLast=ts; scenePhase+=dt/180;
+  try{
   var sp=0.16*dt, dx=0, dy=0;
   if(sceneKeys['w']||sceneKeys['arrowup'])dy-=1; if(sceneKeys['s']||sceneKeys['arrowdown'])dy+=1;
   if(sceneKeys['a']||sceneKeys['arrowleft'])dx-=1; if(sceneKeys['d']||sceneKeys['arrowright'])dx+=1;
@@ -1821,6 +1822,7 @@ function sceneLoop(ts){
       return false;
     }
     function tryMove(nx0,ny0){
+      if(collides(P.x,P.y)){ P.x=nx0; P.y=ny0; return; } // 已卡在物内：自由走出（逃逸模式）
       if(!collides(nx0,ny0)){ P.x=nx0; P.y=ny0; return; }
       if(!collides(nx0,P.y)){ P.x=nx0; return; } // 沿墙滑动：横行
       if(!collides(P.x,ny0)){ P.y=ny0; return; } // 沿墙滑动：竖行
@@ -1848,6 +1850,7 @@ function sceneLoop(ts){
   sceneNear=null;
   if(P){ var best=1e9; for(const b of SCENE_ALL){ var d0=bDoor(b); var dd=(P.x-d0.x)*(P.x-d0.x)+(P.y-d0.y)*(P.y-d0.y); if(dd<70*70 && dd<best){ best=dd; sceneNear=b; } } }
   drawScene(ctx);
+  }catch(e0){ try{ toast('场景异常：'+(e0.message||e0)); }catch(e1){} } // 循环永不静默猝死
   requestAnimationFrame(sceneLoop);
 }
 var sceneTargetBuild=null;
