@@ -1013,7 +1013,12 @@ async function settleTask(row, viaKeqing){
     // 声望更新
     let gain = ((ok ? 4 : 2) + (hasSkill('xunming')?1:0) + (hasSkill('fushu')?1:0));
     if(hasSkill('haoran')) gain = Math.round(gain*1.5); // 浩然之气：声望倍增 // 声望与国力解耦+修业加成
-    await perAdd('gold', ok?3:1); // 差事赏金（尽心 3 金 / 循例 1 金）
+    // 差事赏金：国库实发（守恒）——国库空虚则缓发
+    const gPay = await resLoad();
+    const wantGold = ok?3:1;
+    const payGold = Math.min(wantGold, gPay.gold||0);
+    if(payGold>0){ gPay.gold -= payGold; await resSave(gPay); await perAdd('gold', payGold); if(payGold<wantGold) toast('国库空虚——赏金仅发 '+payGold+' 金'); }
+    else toast('国库空虚——赏金缓发，盼卿捐输充盈');
     const { data:pv, error:e2 } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta:gain });
     if(e2) throw e2;
     const oldRank = rankOf(player.prestige).n;
@@ -1212,7 +1217,7 @@ async function renderTasks(){
     clock += '<div class="hint">📦 国库：木 '+(r0.wood||0)+' · 粮 '+(r0.grain||0)+' · 石 '+(r0.stone||0)+' · 金 '+(r0.gold||0)+'</div>';
     try{
       const g0 = (await dbRead('player_tasks', q=>q.eq('token',player.token).eq('dim','gather'))).find(x=>x.status==='running');
-      if(g0) clock += '<div class="hint">⛏ 采集中（'+(RES.find(x=>x.k===g0.war_side)||{n:g0.war_side}).n+' · 已得约 '+Math.floor((Date.now()-new Date(g0.started_at))/60000*GATHER_RATE*(1+gatherBonus()))+'）——采集点结算入库</div>';
+      if(g0) clock += '<div class="hint">⛏ 采集中（'+(RES.find(x=>x.k===g0.war_side)||{n:g0.war_side}).n+' · 已得约 '+Math.floor((Date.now()-new Date(g0.started_at))/60000*gatherRateOf(g0.war_side)*(g0.war_side==='gold'?1:(1+gatherBonus())))+'）——采集点结算入库</div>';
     }catch(e){}
   }
   $('taskBox').innerHTML = clock + tasks.map((t,i)=>{
@@ -1756,6 +1761,7 @@ const SCENE_SPOTS = [
  {k:'farm',   name:'良田',   icon:'🌾', res:'grain', x:370, y:440, w:130, h:80, sub:'种地得粮'},
  {k:'forest', name:'林场',   icon:'🌲', res:'wood',  x:600, y:300, w:110, h:80, sub:'伐木得木'},
  {k:'quarry', name:'采石场', icon:'⛰',  res:'stone', x:240, y:305, w:110, h:80, sub:'采石得石'},
+ {k:'goldmine',name:'淘金场', icon:'✨', res:'gold',  x:620, y:430, w:110, h:80, sub:'淘沙得金（极慢）'},
 ];
 const SCENE_ALL = SCENE_BUILDINGS.concat(SCENE_SPOTS);
 function bDoor(b){ return {x:b.x + b.w/2, y:b.y + b.h + 14}; }
@@ -1892,7 +1898,7 @@ function openBuilding(k){
   var body=$('bmBody');
   if(k==='chaotang'){ body.innerHTML=chaotangHtml(); bindChaotang(body); }
   else if(k==='gongdi'){ body.innerHTML='<div class="hint">载入中…</div>'; gongdiHtml(body); }
-  else if(k==='farm'||k==='forest'||k==='quarry'){ gatherHtml(b); }
+  else if(k==='farm'||k==='forest'||k==='quarry'||k==='goldmine'){ gatherHtml(b); }
   else if(k==='xuegong'){ academyHtml(body); }
   else { body.innerHTML='<div class="hint">载入中…</div>'; officeHtml(b, body); }
   $('bMask').classList.add('on');
@@ -1983,7 +1989,7 @@ function initSceneInput(){
   $('bMask').addEventListener('click',e=>{ if(e.target.id==='bMask') closeBuilding(); });
 }
 /* ============ 全国工事（多人+AI 协作大工程） ============ */
-const RES = [{k:'wood',n:'木料'},{k:'grain',n:'粮草'},{k:'stone',n:'石料'}];
+const RES = [{k:'wood',n:'木料'},{k:'grain',n:'粮草'},{k:'stone',n:'石料'},{k:'gold',n:'黄金'}];
 const PROJ_POOL = [
  {name:'营造宫室', base:9000, need:{wood:.55,stone:.45}, dim:'economy', rw:6, desc:'为王前驱，采木琢石，营建宫室。'},
  {name:'大造战船', base:8000, need:{wood:.7,stone:.3},  dim:'military', rw:6, desc:'伐木为舟，备舟师以临江。'},
@@ -2081,13 +2087,11 @@ async function donateToNation(resK){
   if(amt<=0) return {ok:false, msg:'私产没有可捐的'};
   if(!await perAdd(resK, -amt)) return {ok:false, msg:'私产账繁忙'};
   if(!await resAdd(resK, amt)){ await perAdd(resK, amt); return {ok:false, msg:'国库账繁忙'}; }
-  // 捐输折金：8 资源=1 金，每日 240 单位封顶（防通胀）
-  const donatedToday = (await dbRead('player_actions', q=>q.eq('token',player.token).eq('action_type','donate').order('created_at',{ascending:false}).limit(20))).filter(a0=>new Date(a0.created_at)>new Date(Date.now()-86400000)).reduce((s0,a0)=>s0+(a0.amount||0),0);
-  const allowed = Math.max(0, 240 - donatedToday);
-  const goldBack = Math.floor(Math.min(amt, allowed) / 8);
-  if(goldBack>0) await perAdd('gold', goldBack);
-  await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'donate', dim:resK, amount:amt, note:'捐输'+((RES.find(x=>x.k===resK)||{n:resK}).n)+'+'+amt+' 入国库'+(goldBack>0?('，得金 '+goldBack):'')});
-  return {ok:true, amt:amt, gold:goldBack};
+  // 黄金守恒：捐输不再折金——捐输换声望；金唯淘金场缓慢产出
+  if(amt>=100){ const { error:pe0 } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta:1 }); if(!pe0 && player){ player = {...player, prestige:(player.prestige||0)+1}; } }
+
+  await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'donate', dim:resK, amount:amt, note:'捐输'+((RES.find(x=>x.k===resK)||{n:resK}).n)+'+'+amt+' 入国库'});
+  return {ok:true, amt:amt};
 }
 async function allocToProj(total, allocBonus){
   let arr = await loadProj();
@@ -2103,8 +2107,7 @@ async function allocToProj(total, allocBonus){
     if(want>0){ act.have[k]=(act.have[k]||0)+want; stock[k]-=want; moved+=want; }
   }
   if(moved<=0) return {ok:false, msg:'国库存量不足，无从拨付——先多收集'};
-  const bonusExtra = Math.round(moved * (allocBonus||0));
-  if(bonusExtra>0){ for(const k in act.need){ const g0=Math.max(0,(act.need[k]-(act.have[k]||0))); const add=Math.min(g0, Math.round(bonusExtra*g0/gapSum)); act.have[k]=(act.have[k]||0)+add; moved+=add; } }
+  // 技能不再凭空增料（黄金守恒同理：材料守恒）——加成改体现为个人拨付上限
   if(!await resSave(stock)) return {ok:false, msg:'国库账繁忙，稍后再试'};
   if(!await saveProj(arr)) return {ok:false, msg:'工事账繁忙，稍后再试'};
   window._proj = act;
@@ -2128,7 +2131,7 @@ async function dailyEconomyTick(){
     // 1) AI 卿士收集入国库
     const power = Math.round(((nation.military||40)+(nation.economy||40)+(nation.livelihood||40))/3);
     const yield0 = 240 + power*2 + Math.round((nation.pop||200)/25); // 人口放大国力
-    for(const r0 of RES){ await resAdd(r0.k, Math.round(yield0/3)); }
+    for(const r0 of RES.filter(x=>x.k!=='gold')){ await resAdd(r0.k, Math.round(yield0/3)); } // 黄金不凭空产出
     // 2) AI 自动拨付工事
     let arr = await loadProj();
     const act = arr.find(pr=>!pr.done);
@@ -2225,25 +2228,26 @@ async function gongdiHtml(body){
     h+='<div class="hint">今日已服役——明日再来（AI 之卿们仍在收集与拨付）。</div>';
   } else {
     h+='<div class="choices">';
-    for(const r0 of RES){
+    for(const r0 of RES.filter(x=>x.k!=='gold')){
       h+='<button class="minor" data-labor="'+r0.k+'" data-choice="0">尽力收集 · '+r0.n+'（4 小时，产出高有风险）</button>';
     }
     h+='</div><div class="hint">帮工（即完、稳成、产出少）：';
-    h+=RES.map(r0=>'<button class="minor" data-labor2="'+r0.k+'">帮工·'+r0.n+'</button>').join(' ')+'</div>';
+    h+=RES.filter(x=>x.k!=='gold').map(r0=>'<button class="minor" data-labor2="'+r0.k+'">帮工·'+r0.n+'</button>').join(' ');+'</div>';
   }
   h+='<div class="choices"><button class="minor" data-alloc="1" style="border-color:var(--seal);color:#d49a8a">全力赶工（拨国库之积入工事 · 今日限 800）</button></div>';
   body.innerHTML=h;
   body.querySelectorAll('button[data-settle]').forEach(bt=>{ bt.onclick=async()=>{ const r=(await dbRead('player_tasks', q=>q.eq('id',+bt.dataset.settle)))[0]; if(r){ await settleLabor(r); openBuilding('gongdi'); } }; });
   body.querySelectorAll('button[data-labor]').forEach(bt=>{ bt.onclick=()=>{ startLabor(bt.dataset.labor, 0); }; });
   body.querySelectorAll('button[data-labor2]').forEach(bt=>{ bt.onclick=()=>{ startLabor(bt.dataset.labor2, 1); }; });
-  body.querySelectorAll('button[data-donate]').forEach(bt=>{ bt.onclick=async()=>{ bt.disabled=true; const r0=await donateToNation(bt.dataset.donate); toast(r0.ok?('捐输成功：+ '+r0.amt+' 入国库'+(r0.gold?('，得金 '+r0.gold):'（今日折金已封顶）')):r0.msg); openBuilding('gongdi'); }; });
+  body.querySelectorAll('button[data-donate]').forEach(bt=>{ bt.onclick=async()=>{ bt.disabled=true; const r0=await donateToNation(bt.dataset.donate); toast(r0.ok?('捐输成功：+ '+r0.amt+' 入国库'+(r0.amt>=100?'（卿之义举，声望+1）':'')):r0.msg); openBuilding('gongdi'); }; });
   body.querySelectorAll('button[data-alloc]').forEach(bt=>{ bt.onclick=async()=>{
     if(!requirePlay()) return;
     try{
       const used = (await dbRead('player_actions', q=>q.eq('token',player.token).eq('action_type','alloc').order('created_at',{ascending:false}).limit(10))).filter(a=>new Date(a.created_at)>new Date(Date.now()-86400000)).reduce((sA,a)=>sA+(a.amount||0),0);
-      const remain = 800-used;
+      const skCap = 800 + ((hasSkill('qixie')?200:0)+(hasSkill('jiguan')?150:0)+(hasSkill('moyu')?300:0)+(hasSkill('banshen')?350:0));
+      const remain = skCap-used;
       if(remain<=0){ toast('今日拨付额度已尽（800）——明日再来'); return; }
-      const r = await allocToProj(remain, (hasSkill('qixie')?0.20:0)+(hasSkill('jiguan')?0.15:0)+(hasSkill('moyu')?0.40:0)+(hasSkill('banshen')?0.50:0));
+      const r = await allocToProj(remain, 0);
       if(!r.ok){ toast(r.msg); return; }
       await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'alloc', dim:'proj', amount:r.moved, note:'赶工拨付+'+r.moved});
       toast('已拨付 '+r.moved+' 单位至工事'); sfx('ok');
@@ -2359,6 +2363,7 @@ function renderWInfo(k, rows){
 
 /* ============ 诸子百家技能树 + 采集系统 ============ */
 const GATHER_RATE = 1.5; // 采集每分钟基础产出
+function gatherRateOf(resK){ return resK==='gold' ? 0.2 : GATHER_RATE; } // 淘金极慢——金是天生的稀缺
 const SKILLS = [
  {id:'shennong', school:'农家',   name:'神农之言', desc:'奉行神农之教，躬耕陇亩——采集与服役产出 +30%。', cost:{grain:200,wood:100}, req:[]},
  {id:'gouxu',    school:'农家',   name:'沟洫之术', desc:'开沟引水，灌渠成网——尽力收集产出再 +15%。', cost:{grain:400,stone:200}, req:['shennong']},
@@ -2399,7 +2404,7 @@ async function gatherHtml(b){
   const run = mine.find(r=>r.status==='running');
   let h='<div class="task"><div class="thead"><span><span class="tname">'+b.icon+' '+b.name+'</span><span class="tag wen">采集</span></span><small style="color:var(--ink-dim)">按分钟进账 · 随时结算</small></div>';
   const myStock = await perLoad();
-  h+='<div class="tdesc">此地出产'+resName+'。基础速率 '+GATHER_RATE+'/分钟'+(gatherBonus()>0?'（修业加成后 '+ (Math.round(GATHER_RATE*(1+gatherBonus())*100)/100) +'/分钟）':'')+'。</div><div class="hint">你私产现有 '+resName+'：'+(myStock[resK]||0)+'</div>';
+  h+='<div class="tdesc">此地出产'+resName+'。速率 '+gatherRateOf(resK)+'/分钟'+(resK!=='gold'&&gatherBonus()>0?'（修业加成后 '+ (Math.round(gatherRateOf(resK)*(1+gatherBonus())*100)/100) +'/分钟）':'')+'。</div><div class="hint">你私产现有 '+resName+'：'+(myStock[resK]||0)+'</div>';
   if(run){
     h+='<div id="gatherLive" class="result ok">…</div>';
     h+='<div class="choices"><button class="minor" data-gstop="'+run.id+'" style="border-color:var(--seal);color:#d49a8a">结算入库（离手）</button></div>';
@@ -2412,7 +2417,7 @@ async function gatherHtml(b){
   const live=$('gatherLive');
   let tm=null;
   if(live && run){
-    const upd=()=>{ const mins=(Date.now()-new Date(run.started_at))/60000; const amt=Math.floor(mins*GATHER_RATE*(1+gatherBonus())); live.textContent='采集中 · 已历 '+Math.floor(mins)+' 分钟 · 约得 '+resName+' '+amt; };
+    const upd=()=>{ const mins=(Date.now()-new Date(run.started_at))/60000; const amt=Math.floor(mins*gatherRateOf(run.war_side)*(run.war_side==='gold'?1:(1+gatherBonus()))); live.textContent='采集中 · 已历 '+Math.floor(mins)+' 分钟 · 约得 '+resName+' '+amt; };
     upd(); tm=setInterval(upd,1000);
   }
   body.querySelectorAll('button[data-gstart]').forEach(bt=>{ bt.onclick=()=>{ if(tm) clearInterval(tm); startGather(bt.dataset.gstart); }; });
@@ -2437,7 +2442,7 @@ async function settleGather(row){
   if(busy) return; busy=true; showLoading('结 算');
   try{
     const mins = Math.max(0,(Date.now()-new Date(row.started_at))/60000);
-    const amt = Math.floor(mins*GATHER_RATE*(1+gatherBonus()));
+    const amt = Math.floor(mins*gatherRateOf(row.war_side)*(row.war_side==='gold'?1:(1+gatherBonus())));
     if(amt<=0){ busy=false; hideLoading(); toast('才刚开工，尚无所得'); return; }
     if(!await perAdd(row.war_side, amt)){ toast('私产账繁忙'); busy=false; hideLoading(); return; }
     await cloud.database.from('player_tasks').update({status:'done'}).eq('id',row.id);
@@ -2568,6 +2573,11 @@ function drawSpot(ctx, sp){
     ctx.fillStyle='#4a6b3a';
     for(var t=0;t<4;t++){ var tx=sp.x+16+(t%2)*46, ty=sp.y+22+Math.floor(t/2)*34;
       ctx.beginPath(); ctx.moveTo(tx-14,ty); ctx.lineTo(tx,ty-26); ctx.lineTo(tx+14,ty); ctx.closePath(); ctx.fill(); }
+  } else if(sp.k==='goldmine'){
+    ctx.fillStyle='#8f8a80';
+    ctx.beginPath(); ctx.moveTo(sp.x+8,sp.y+sp.h-8); ctx.lineTo(sp.x+30,sp.y+14); ctx.lineTo(sp.x+56,sp.y+sp.h-8); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='#d4af37';
+    for(var gn=0;gn<5;gn++){ ctx.beginPath(); ctx.arc(sp.x+18+gn*17, sp.y+sp.h-12-(gn%2)*6, 2.5, 0, 7); ctx.fill(); }
   } else {
     ctx.fillStyle='#8f8a80';
     ctx.beginPath(); ctx.moveTo(sp.x+8,sp.y+sp.h-8); ctx.lineTo(sp.x+30,sp.y+14); ctx.lineTo(sp.x+56,sp.y+sp.h-8); ctx.closePath(); ctx.fill();
