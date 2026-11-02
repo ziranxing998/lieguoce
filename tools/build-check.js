@@ -74,6 +74,10 @@ if (!/from showLoading|hideLoading\(\)\s*\n\s*\}\s*$/.test(game)) {
 }
 // SDK 容错：cloud 未就绪时登录页有提示而非白屏
 if (game.includes('SDK 未就绪') || game.includes('卷轴未展')) ok('SDK 失败兜底提示'); else bad('SDK 失败无兜底提示');
+// dbRead 必须先 .select() 再交给回调（eq/order 只在 select 构建器上——q.eq is not a function 教训）
+const dbReadBody = game.slice(game.indexOf('async function dbRead'), game.indexOf('async function dbRead') + 300);
+/dbRead[\s\S]*?from\(table\)\.select\(/.test(game) ? ok('dbRead 先 select 再过滤') : bad('dbRead 缺 select 前置', '过滤方法调用将报 q.eq is not a function');
+if (dbReadBody.includes('.select(')) ok('dbRead 实现体含 select'); else bad('dbRead 实现体缺 select');
 
 /* ---------- 历史教训回归（硬编码残留检索） ---------- */
 console.log('[4] 历史教训回归');

@@ -414,7 +414,8 @@ function nextRankOf(p){ for(const x of RANKS){ if(p<x.v) return x; } return null
 
 /* ============ 数据层 ============ */
 async function dbRead(table, fn){
-  let q = cloud.database.from(table);
+  // 修复：过滤方法（eq/order/limit）挂在 select() 返回的构建器上，from() 原始返回没有 eq
+  let q = cloud.database.from(table).select('*');
   const { data, error } = await (fn?fn(q):q);
   if(error) throw error;
   return data;
