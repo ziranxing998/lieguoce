@@ -461,7 +461,8 @@ function templateDecreeFull(nat, memos){
     qi:`寡人尝闻稷下先生之言：国之大务，在因时制宜。今${dimName}之事亟矣，诸君其勉之，寡人不吝封赏！`,
     chu:`嗟乎！大楚之业，当绍先君之鸿志。今${dimName}为先务，诸卿其佐寡人，共图大计！`,
   };
-  const NA = NATION_META[warState.attacker].n, NB = NATION_META[warState.defender].n;
+  const NA = warActive ? NATION_META[warState.attacker].n : '';
+  const NB = warActive ? NATION_META[warState.defender].n : '';
   const warVoice = {
     atk:`兵者，国之大事。今王师已出，将士用命。凡我臣工，转运粮秣、攻城拔寨，毋令寡人失望！`,
     mid:`诸侯交兵，寡人当自保而观变。商路不可断，武备不可弛。诸君各安其业，寡人自有计较。`,
@@ -474,8 +475,8 @@ function templateDecreeFull(nat, memos){
   };
   const ev = {...EVENTS[Math.floor(Math.random()*EVENTS.length)]};
   return {
-    content: warActive? (nat.nation_key===warState.attacker?warVoice.atk:(nat.nation_key===warState.defender?warVoice.def:warVoice.mid)) : voice[meta?nat.nation_key:'qin'],
-    quote: memo? `既有【${memo.t}】之奏，寡人思之再三，其言可用。` : (warActive?'胜负之数，在粮秣与人心。':quoteV[meta?nat.nation_key:'qin']),
+    content: warActive? (nat.nation_key===warState.attacker?warVoice.atk:(nat.nation_key===warState.defender?warVoice.def:warVoice.mid)) : voice[nat.nation_key]||voice.qin,
+    quote: memo? `既有【${memo.t}】之奏，寡人思之再三，其言可用。` : (warActive?'胜负之数，在粮秣与人心。':quoteV[nat.nation_key]||quoteV.qin),
     focus, tasks:t3, event:ev,
   };
 }
@@ -629,7 +630,7 @@ async function settleWar(result){
   warState = {active:false, progress:0, warXun:0, node:0, attacker:null, defender:null};
   if(player.nation_key===A) nation = {...nation, ...updA};
   if(player.nation_key===B) nation = {...nation, ...updD};
-  return {title, desc};
+  return {title, desc, defender:B};
 }
 
 /* ============ 方略树（国家级长期研究线） ============ */
@@ -814,7 +815,7 @@ function renderKeqing(){
     r.textContent = '客卿正在解读……';
     try{
       const txt = await keqingCall('你是先秦游戏里玩家门下的客卿。请用一句白话解读君上这份诏书的意图与玩家应对要点（60字内）。只输出解读。',
-        `诏书：${decree.text||''} 君心参悟：${decree.quote||''}`);
+        `诏书：${(decree&&decree.text)||'（暂无诏书）'} 君心参悟：${(decree&&decree.quote)||''}`);
       r.innerHTML = `客卿解读：${esc(txt)}`;
     }catch(e){ r.textContent = '客卿失手：'+e.message; }
   };
@@ -857,7 +858,7 @@ async function completeTask(task, choiceIdx, viaKeqing){
       const { data:wr, error:we } = await cloud.database.rpc('bump_war', { p_delta:delta });
       if(we) throw we;
       if(!wr || !wr.active){ busy=false; hideLoading(); toast('战事已结束'); return; }
-      const q = await loadNation('qin');
+      const q = await loadNation(warState.attacker); // B2：账本=攻方行
       let np = wr.progress;
       let node = wr.node||0;
       warState.progress = np; warState.node = node;
@@ -867,7 +868,7 @@ async function completeTask(task, choiceIdx, viaKeqing){
         if(node>=2){ // 王都陷落 → 攻方大胜
           await cloud.database.from('nations').update({war_progress:100, war_node:2, updated_at:new Date().toISOString()}).eq('id',q.id).eq('war_progress',100);
           warState.progress=100; warState.node=2;
-          const res = await settleWar('atk_win'); if(res) toast(`会战终局：${res.title}（${WAR_CAPITALS[warState.defender]||'王都'}陷落）`);
+          const res = await settleWar('atk_win'); if(res) toast(`会战终局：${res.title}（${WAR_CAPITALS[res.defender]||'王都'}陷落）`);
           np = 100;
         }else{
           // 攻方小赚、守方失血
@@ -875,16 +876,16 @@ async function completeTask(task, choiceIdx, viaKeqing){
           await cloud.database.rpc('bump_nation_dim', { p_nation:q.id, p_dim:'military', p_delta:4 });
           await cloud.database.rpc('bump_nation_dim', { p_nation:q.id, p_dim:'economy', p_delta:2 });
           await cloud.database.from('nations').update({war_node:nextNode, war_progress:0, updated_at:new Date().toISOString()}).eq('id',q.id).eq('war_progress',100);
-          const c = await loadNation('chu');
+          const c = await loadNation(warState.defender); // B2：守方行
           if(c){
             await cloud.database.rpc('bump_nation_dim', { p_nation:c.id, p_dim:'economy', p_delta:-4 });
             await cloud.database.rpc('bump_nation_dim', { p_nation:c.id, p_dim:'livelihood', p_delta:-2 });
-            await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:fallen+'陷落', desc:'秦军攻克'+fallen+'，楚军退守'+WAR_NODES[nextNode]+'。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',c.id);
+            await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:fallen+'陷落', desc:NATION_META[warState.attacker].n+'军攻克'+fallen+'，守军退守'+getWarNodes(warState.defender)[nextNode]+'。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',c.id);
           }
           np = 0;
           warState.node = nextNode;
           toast(`⚔ ${fallen}陷落！秦军兵锋直指${WAR_NODES[nextNode]}`);
-          if(player.nation_key==='qin'){ nation = {...nation, military:Math.min(100,(nation.military||0)+4), economy:Math.min(100,(nation.economy||0)+2)}; }
+          if(player.nation_key===warState.attacker){ nation = {...nation, military:Math.min(100,(nation.military||0)+4), economy:Math.min(100,(nation.economy||0)+2)}; }
         }
       }else{
         np = Math.max(0, Math.min(100, np));
@@ -933,6 +934,7 @@ async function nextXun(){
       const res = await seasonSettle();
       if(res) toast('📜 本季史书已修成——列国重开新季');
       nation = await loadNation(player.nation_key);
+      memoChoices = []; // B7：跨季内存残留清理
     }
     await maybeStartWar();
     await loadWarState();
@@ -1183,6 +1185,7 @@ function renderSpecSwitch(){
       try{
         nation = await loadNation(player.nation_key);
         await loadWarState();
+        await ensureDecree(); // B6：观政也读现成诏书
         renderAll();
       }catch(e){ toast('切换失败'); }
       hideLoading();
@@ -1217,7 +1220,7 @@ async function renderFang(){
 async function renderNews(){
   let rows = [];
   try{ rows = await dbRead('nations', q=>q.order('id')); }catch(e){ return; }
-  const qinRow = rows.find(r=>r.nation_key==='qin');
+  const qinRow = rows.find(r=>r.war_active) || rows.find(r=>r.nation_key==='qin'); // B3：任意攻方行
   let warHtml = '';
   if(qinRow && qinRow.war_active){
     const p = qinRow.war_progress||0;
@@ -1231,7 +1234,7 @@ async function renderNews(){
       <div class="war-state">⚔ ${NATION_META[qinRow.nation_key].n}伐${NATION_META[qinRow.war_target||'chu'].n} · 会战进行中 · 始于第${qinRow.war_xun}旬 · 攻至：${nodeChips} ${player.nation_key===qinRow.nation_key?'（我军攻势）':(player.nation_key===qinRow.war_target?'（我军守御）':'（观变谋利）')}</div>
       <img class="warmap" src="${($('setupMap')||{}).src||''}" alt="列国舆图">
       <div class="warbar"><div class="fill-q" style="width:${p}%"></div><div class="fill-c" style="width:${100-p}%"></div></div>
-      <div class="war-labels"><span>楚军守御（0）</span><span>${p}</span><span>攻陷${WAR_NODES[node]}（100）</span></div>
+      <div class="war-labels"><span>守军（0）</span><span>${p}</span><span>攻陷${WNODES[node]}（100）</span></div>
       <div class="hint">${(player.nation_key===qinRow.nation_key||player.nation_key===qinRow.war_target)?'完成带战旗标记的任务即推进/守住战线；三城依次攻防，王都陷落即分胜负。':'两国交兵，商路正旺——安心发展即是渔翁。'}</div>`;
   }
   // 邦交
