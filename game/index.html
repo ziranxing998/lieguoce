@@ -332,7 +332,16 @@ const FANG = [ // 方略树：每线 6 格，每格 +2 对应维，成线再 +5�
   {k:'zongheng', n:'纵横', dim:'diplomacy', cell:'使节四出，与国渐多。'},
 ];
 const FANG_CELLS = 6;
-const WAR_NODES = ['边城','雄关','王都']; // 秦攻楚守：三节点依次攻防
+const WAR_NODES = ['边城','雄关','王都']; // 三节点依次攻防
+const NATION_INIT = { // 七国差异化开局（战国初期格局）：秦强军、齐富文、楚地广、魏初霸、燕韩最弱
+  qin:{military:55,economy:45,livelihood:45,culture:35,diplomacy:40},
+  qi:{military:35,economy:55,livelihood:45,culture:50,diplomacy:40},
+  chu:{military:50,economy:40,livelihood:50,culture:35,diplomacy:35},
+  yan:{military:30,economy:30,livelihood:35,culture:30,diplomacy:35},
+  zhao:{military:50,economy:35,livelihood:40,culture:30,diplomacy:35},
+  wei:{military:45,economy:50,livelihood:40,culture:40,diplomacy:45},
+  han:{military:30,economy:35,livelihood:35,culture:35,diplomacy:30},
+};
 const SEASON_LEN = 12; // 一季 12 旬
 
 let player = null;      // {token,name,nation_key,prestige}
@@ -724,9 +733,10 @@ async function seasonSettle(){
   await cloud.database.from('decrees').insert({nation_key:'tianxia', xun:1, content:JSON.stringify({history, ranking:rankTxt}), quote:history.slice(0,60), focus_dim:null, source:'history'});
   // 重置世界：国力回 40、旬回 1、战事/方略/外交清空（声望作为跨季遗产保留）
   for(const r of rows){
-    const bonus = (scored[0] && scored[0].key===r.nation_key) ? 4 : 0; // 上季霸主开局微优势
+    const bonus = (scored[0] && scored[0].key===r.nation_key) ? 3 : 0; // 上季霸主开局全维微优势
+    const init = NATION_INIT[r.nation_key] || {military:40,economy:40,livelihood:40,culture:40,diplomacy:40};
     await cloud.database.from('nations').update({
-      xun:1, military:40+bonus, economy:40, livelihood:40, culture:40, diplomacy:40,
+      xun:1, military:init.military+bonus, economy:init.economy+bonus, livelihood:init.livelihood+bonus, culture:init.culture+bonus, diplomacy:init.diplomacy+bonus,
       war_active:false, war_progress:0, war_node:0, war_xun:0,
       fanglue:JSON.stringify({line:'junzhi', lv:0, done:[]}),
       diplo:JSON.stringify({'qin-chu':-20,'qin-qi':10,'chu-qi':0}),
