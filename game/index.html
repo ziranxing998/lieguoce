@@ -1220,6 +1220,12 @@ async function renderFang(){
 async function renderNews(){
   let rows = [];
   try{ rows = await dbRead('nations', q=>q.order('id')); }catch(e){ return; }
+  let rosterHtml = '';
+  try{
+    const ps = await dbRead('players', q=>q.order('created_at',{ascending:false}).limit(50));
+    rosterHtml = '<div class="logline"><span class="x">名册</span>本服已有 '+ps.length+' 位士人入朝'+
+      (ps.length? ' · 最近：'+esc((ps[0]&&ps[0].name)||''):'')+'</div>';
+  }catch(e){}
   const qinRow = rows.find(r=>r.war_active) || rows.find(r=>r.nation_key==='qin'); // B3：任意攻方行
   let warHtml = '';
   if(qinRow && qinRow.war_active){
@@ -1269,7 +1275,7 @@ async function renderNews(){
     const warFlag = r.war_active?' <span class="war-flag">⚔会战中</span>':'';
     return `<div class="logline"><span class="x">${NATION_META[r.nation_key].n}国</span>第${r.xun}旬${warFlag}${evTxt}</div>`;
   }).join('');
-  $('newsBox').innerHTML = warHtml + dipHtml + histHtml + newsHtml;
+  $('newsBox').innerHTML = rosterHtml + warHtml + dipHtml + histHtml + newsHtml;
   const bm = $('btnMediate'); if(bm) bm.onclick = mediate;
 }
 function renderAll(){ renderWho(); renderDims(); renderDecree(); renderTasks(); renderMemo(); renderKeqing(); renderLog().catch(()=>{}); renderNews().catch(()=>{}); renderFang().catch(()=>{}); renderMerit().catch(()=>{}); }
