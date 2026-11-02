@@ -662,6 +662,14 @@ async function maybeStartWar(){
     const atk = rows.find(r=>r.nation_key===A);
     const dfd = rows.find(r=>r.nation_key===B);
     if(!atk||!dfd||atk.war_active||dfd.war_active) return;
+    // 兴兵耗粮：攻方国库需 ≥600 粮（兵马未动粮草先行）
+    let aRes = {wood:0,grain:0,stone:0}; try{ aRes={...aRes, ...JSON.parse(atk.resources||'{}')}; }catch(e){}
+    if((aRes.grain||0) < 600){
+      await cloud.database.from('nations').update({last_event:JSON.stringify({xun:atk.xun, title:'粮秣不足', desc:NATION_META[A].n+'欲兴兵而仓廪不实，只得罢兵休养。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',atk.id);
+      return;
+    }
+    aRes.grain -= 600;
+    await cloud.database.from('nations').update({resources:JSON.stringify(aRes), updated_at:new Date().toISOString()}).eq('id',atk.id);
     const x0 = atk.xun;
     const { data } = await cloud.database.from('nations').update({war_active:true, war_progress:0, war_xun:x0, war_node:0, war_target:B, updated_at:new Date().toISOString()}).eq('id',atk.id).select();
     if(data&&data[0]) warState = {active:true, attacker:A, defender:B, progress:0, warXun:x0, node:0};
@@ -1652,13 +1660,13 @@ async function ensureDailyEdict(){
   const day = new Date().toISOString().slice(0,10);
   try{
     const rows = await dbRead('daily_edicts', q=>q.eq('nation_key',player.nation_key).eq('day',day).limit(1));
-    if(rows[0]){ window._dailyEdict = rows[0].content; renderDaily(); aiProjectTick(); return; }
+    if(rows[0]){ window._dailyEdict = rows[0].content; renderDaily(); dailyEconomyTick(); return; }
     const txt = await llmDailyEdict();
     const finalTxt = txt || templateDailyEdict();
     const { data:ins, error:ie } = await cloud.database.from('daily_edicts').insert({nation_key:player.nation_key, day, content:finalTxt}).select();
     if(ie){ const again = await dbRead('daily_edicts', q=>q.eq('nation_key',player.nation_key).eq('day',day).limit(1)); window._dailyEdict = (again[0]&&again[0].content)||finalTxt; }
     else { window._dailyEdict = (ins&&ins[0]&&ins[0].content)||finalTxt; }
-    aiProjectTick();
+    dailyEconomyTick();
     renderDaily();
   }catch(e){ /* 晨谕非关键路径，静默 */ }
 }
@@ -1945,99 +1953,130 @@ async function ensureProject(){
   if(!player || spectate || !nation) return;
   try{
     let arr = await loadProj();
-    const now = Date.now();
-    let act = arr.find(pr=>!pr.done);
-    if(act){
-      if(new Date(act.deadline) <= now){
-        const totalNeed = Object.values(act.need).reduce((a,b)=>a+b,0);
-        const totalHave = Object.keys(act.need).reduce((a,k)=>a+(act.have[k]||0),0);
-        const ratio = Math.min(1, totalHave/totalNeed);
-        act.done = true; act.partial = true; act.finish_ratio = ratio;
-        const { error:be } = await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:act.dim, p_delta:Math.max(1,Math.round(act.rw*ratio)) });
-        if(be) throw be;
-        await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:'工事'+(ratio>=1?'告竣':'未竟'), desc:'【'+act.name+'】'+(ratio>=1?'如期完工，举国相庆。':'工期已至，仅成十之'+(Math.round(ratio*10))+'——史笔已录。'), amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',nation.id);
-        await saveProj(arr);
-        toast('全国工事【'+act.name+'】'+(ratio>=1?'告竣！':'工期已至，未竟全功'));
-      }
-      window._proj = act; return;
-    }
+    const act = arr.find(pr=>!pr.done);
+    if(act){ window._proj = act; return; } // 未完工事跨旬一直续建（用户定案）
     const def = PROJ_POOL[(nation.xun*7 + player.nation_key.length*3) % PROJ_POOL.length];
     const need = {}; for(const k in def.need) need[k] = Math.round(def.base*def.need[k]/10)*10;
     const have = {}; for(const k in need) have[k] = 0;
-    const np = { id:'p'+nation.xun+'_'+nation.nation_key, name:def.name, desc:def.desc, need:need, have:have, dim:def.dim, rw:def.rw, xun:nation.xun, deadline:new Date((nation.xun_started_at? new Date(nation.xun_started_at).getTime():Date.now())+XUN_MS).toISOString(), done:false, contributors:{}, ai_last_day:'' };
+    const np = { id:'p'+nation.xun+'_'+nation.nation_key, name:def.name, desc:def.desc, need:need, have:have, dim:def.dim, rw:def.rw, xun:nation.xun, started_at:new Date().toISOString(), done:false, contributors:{}, ai_last_day:'' };
     arr.push(np);
-    if(await saveProj(arr)){ window._proj = np; toast('君上颁布全国工事：【'+np.name+'】——至工地服役！'); }
+    if(await saveProj(arr)){ window._proj = np; toast('君上颁布全国工事：【'+np.name+'】——至工地收集、赶工！'); }
   }catch(e){ /* 工事非关键路径 */ }
 }
-async function projAdd(res, amt, who){
-  let arr = await loadProj();
-  let act = arr.find(pr=>!pr.done);
-  if(!act) return {ok:false, msg:'当前无进行中的工事'};
-  act.have[res] = (act.have[res]||0) + amt;
-  if(!act.contributors[who]) act.contributors[who] = {name:(player&&player.name)||'', amt:0};
-  act.contributors[who].amt += amt;
-  const totalNeed = Object.values(act.need).reduce((a,b)=>a+b,0);
-  const totalHave = Object.keys(act.need).reduce((a,k)=>a+(act.have[k]||0),0);
-  let finished = false;
-  if(totalHave >= totalNeed){
-    act.done = true; finished = true;
-    const { error:be } = await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:act.dim, p_delta:act.rw });
-    if(be) throw be;
-    await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:'工事告竣', desc:'【'+act.name+'】如期完工，举国相庆。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',nation.id);
-  }
-  const okSave = await saveProj(arr);
-  return {ok:okSave, finished:finished, proj:act};
-}
+
+
 async function settleLabor(row){
   const ok = row.choice===0 ? (Math.random()<0.78) : true;
   const amt = ok ? (row.choice===0? 260 : 90) : Math.round(90*0.4);
-  const r = await projAdd(row.war_side, amt, player.token);
-  if(!r.ok){ toast('役账更新失败，稍后再试'); return; }
+  const resK = row.war_side;
+  const resName = (RES.find(x=>x.k===resK)||{n:resK}).n;
+  if(!await resAdd(resK, amt)){ toast('国库账繁忙，稍后再试'); return; }
   const { data:pv, error:e2 } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta: ok?3:1 });
   if(!e2){ player = {...player, prestige:pv}; }
-  await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'labor', dim:'proj', amount:amt, note:'服役【'+r.proj.name+'】·'+(RES.find(x=>x.k===row.war_side)||{n:row.war_side}).n+'+'+amt+(ok?'':'·事有蹉跎') });
+  await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'labor', dim:'proj', amount:amt, note:'服役·收集'+resName+'+'+amt+(ok?'':'·事有蹉跎') });
   sfx(ok?'ok':'fail');
-  if(r.finished){ toast('🎉 工事【'+r.proj.name+'】告竣！国力大赏已颁——你的名字在贡献簿上'); sfx('rank'); }
-  else toast('役毕：'+(RES.find(x=>x.k===row.war_side)||{n:''}).n+'+'+amt+(ok?'':'（事有蹉跎）'));
+  toast('役毕：'+resName+'+'+amt+' 已入国库'+(ok?'':'（事有蹉跎）'));
   renderAll();
 }
-async function aiProjectTick(){
+
+async function resLoad(){
+  let r = {wood:0,grain:0,stone:0};
+  if(nation && nation.resources){ try{ r = {...r, ...JSON.parse(nation.resources)}; }catch(e){} }
+  return r;
+}
+async function resSave(res){
+  for(let i=0;i<3;i++){
+    const raw = nation.resources==null? null : nation.resources;
+    let q = cloud.database.from('nations').update({resources:JSON.stringify(res), updated_at:new Date().toISOString()}).eq('id',nation.id);
+    if(raw===null){ q=q.is('resources',null); } else { q=q.eq('resources',raw); }
+    const { data:cas, error:casErr } = await q.select();
+    if(!casErr && cas && cas.length){ nation={...nation, resources:JSON.stringify(res)}; return true; }
+    const nu = await loadNation(player.nation_key); if(nu) nation = nu;
+    try{ res = {...{wood:0,grain:0,stone:0}, ...JSON.parse(nation.resources||'{}')}; }catch(e){}
+  }
+  return false;
+}
+async function resAdd(resK, amt){ const r = await resLoad(); r[resK]=Math.min(30000,(r[resK]||0)+amt); return await resSave(r); }
+async function allocToProj(total){
+  let arr = await loadProj();
+  const act = arr.find(pr=>!pr.done);
+  if(!act) return {ok:false, msg:'当前无进行中的工事'};
+  const gaps = {}; let gapSum=0;
+  for(const k in act.need){ const g0=Math.max(0,(act.need[k]-(act.have[k]||0))); gaps[k]=g0; gapSum+=g0; }
+  if(gapSum<=0) return {ok:false, msg:'工事材料已足，静候完工'};
+  const stock = await resLoad();
+  let moved=0;
+  for(const k in gaps){
+    const want = Math.min(gaps[k], Math.floor(total*gaps[k]/gapSum), stock[k]||0);
+    if(want>0){ act.have[k]=(act.have[k]||0)+want; stock[k]-=want; moved+=want; }
+  }
+  if(moved<=0) return {ok:false, msg:'国库存量不足，无从拨付——先多收集'};
+  if(!await resSave(stock)) return {ok:false, msg:'国库账繁忙，稍后再试'};
+  if(!await saveProj(arr)) return {ok:false, msg:'工事账繁忙，稍后再试'};
+  window._proj = act;
+  if(act){
+    const totalNeed = Object.values(act.need).reduce((a,b)=>a+b,0);
+    const totalHave = Object.keys(act.need).reduce((a,k)=>a+(act.have[k]||0),0);
+    if(totalHave >= totalNeed){
+      act.done = true;
+      const { error:be } = await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:act.dim, p_delta:act.rw });
+      if(be) throw be;
+      await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:'工事告竣', desc:'【'+act.name+'】竣工，举国相庆。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',nation.id);
+      return {ok:true, moved:moved, proj:act, finished:true};
+    }
+  }
+  return {ok:true, moved:moved, proj:act};
+}
+async function dailyEconomyTick(){
   try{
+    const day = new Date().toISOString().slice(0,10);
+    if(window._econTickDay === day) return; window._econTickDay = day;
+    // 1) AI 卿士收集入国库
+    const power = Math.round(((nation.military||40)+(nation.economy||40)+(nation.livelihood||40))/3);
+    const yield0 = 240 + power*2;
+    for(const r0 of RES){ await resAdd(r0.k, Math.round(yield0/3)); }
+    // 2) AI 自动拨付工事
     let arr = await loadProj();
     const act = arr.find(pr=>!pr.done);
-    if(!act) return;
-    const day = new Date().toISOString().slice(0,10);
-    if(act.ai_last_day === day) return;
-    act.ai_last_day = day;
-    const power = Math.round(((nation.military||40)+(nation.economy||40)+(nation.livelihood||40))/3);
-    let total = 240 + Math.round(power*3);
-    const keys = Object.keys(act.need);
-    const remain = keys.reduce((a,k)=>a+Math.max(0,(act.need[k]-(act.have[k]||0))),0);
-    if(remain<=0) return;
-    for(const k of keys){
-      const share = Math.round(total * act.need[k] / keys.reduce((a,k2)=>a+act.need[k2],0));
-      act.have[k] = (act.have[k]||0) + Math.min(share, Math.max(0,act.need[k]-(act.have[k]||0)));
+    if(act){ const gapSum=Object.keys(act.need).reduce((a,k)=>a+Math.max(0,(act.need[k]-(act.have[k]||0))),0); if(gapSum>0) await allocToProj(Math.round(yield0*0.8)); }
+    // 3) 战时耗粮（兵马未动粮草先行）
+    const rows = await dbRead('nations', q=>q.order('id'));
+    const atkRow = rows.find(r=>r.war_active);
+    if(atkRow){
+      let res0 = {wood:0,grain:0,stone:0}; try{ res0={...res0, ...JSON.parse(atkRow.resources||'{}')}; }catch(e){}
+      if((res0.grain||0) >= 150){
+        res0.grain-=150;
+        await cloud.database.from('nations').update({resources:JSON.stringify(res0), updated_at:new Date().toISOString()}).eq('id',atkRow.id);
+      } else {
+        await cloud.database.rpc('bump_war',{p_delta:-8});
+        await cloud.database.from('nations').update({last_event:JSON.stringify({xun:atkRow.xun, title:'粮秣不济', desc:NATION_META[atkRow.nation_key].n+'军粮秣告罄，军心动摇，战线后挫。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',atkRow.id);
+      }
     }
-    act.contributors['ai'] = act.contributors['ai'] || {name:'王命之卿（AI）', amt:0};
-    act.contributors['ai'].amt += total;
-    await saveProj(arr);
-    window._proj = act;
+    // 4) 饥荒检查（本国）
+    const my = await resLoad();
+    if((my.grain||0) < 150){
+      await cloud.database.rpc('bump_nation_dim', { p_nation:nation.id, p_dim:'livelihood', p_delta:-1 });
+      await cloud.database.from('nations').update({last_event:JSON.stringify({xun:nation.xun, title:'仓廪告急', desc:'存粮不足，民有饥色，急宜征粮入仓。', amount:0, dim:null}), updated_at:new Date().toISOString()}).eq('id',nation.id);
+      toast('⚠ 仓廪告急：存粮不足，民生日蹙——去工地收粮！');
+    }
   }catch(e){}
 }
+
 async function gongdiHtml(body){
   await ensureProject();
+  const stock = await resLoad();
   const act = window._proj || (await loadProj()).find(pr=>!pr.done);
-  if(!act){ body.innerHTML='<div class="hint">当前无工事——等君上下一道诏令。</div>'; return; }
+  let h='<div class="task"><div class="thead"><span><span class="tname">🏛 国 库</span><span class="tag wen">常驻</span></span><small style="color:var(--ink-dim)">收集涨库 · 建造与战争耗库</small></div>';
+  h+='<div style="margin:8px 0">'+RES.map(r0=>'<div style="margin:4px 0"><small>'+r0.n+'：<b>'+(stock[r0.k]||0)+'</b></small></div>').join('')+'</div></div>';
+  if(!act){ body.innerHTML=h+'<div class="hint">当前无工事——等君上下一道诏令。</div>'; return; }
   const totalNeed = Object.values(act.need).reduce((a,b)=>a+b,0);
   const totalHave = Object.keys(act.need).reduce((a,k)=>a+(act.have[k]||0),0);
   const pct = Math.min(100, Math.round(totalHave/totalNeed*100));
-  const leftD = Math.max(0, Math.ceil((new Date(act.deadline)-Date.now())/86400000));
   let mine=[]; try{ mine=(await dbRead('player_tasks', q=>q.eq('token',player.token).eq('xun',nation.xun))).filter(r=>r.dim==='proj'); }catch(e){}
   const running = mine.find(r=>r.status==='running');
   const laboredToday = mine.some(r=> new Date(r.started_at) > new Date(Date.now()-86400000));
-  let h='';
-  h+='<div class="task"><div class="thead"><span><span class="tname">🏛 全国工事【'+esc(act.name)+'</span><span class="tag wen">协作</span></span>'
-    +'<small style="color:var(--ink-dim)">总进度 '+pct+'% · 距工期截止 '+leftD+' 天</small></div>'
+  h+='<div class="task"><div class="thead"><span><span class="tname">🏛 全国工事【'+esc(act.name)+'】</span><span class="tag wen">协作 · 跨旬续建</span></span>'
+    +'<small style="color:var(--ink-dim)">总进度 '+pct+'%</small></div>'
     +'<div class="tdesc">'+esc(act.desc)+' —— 一人之力万难功成，举国卿士（含 AI 之卿）共襄之。</div>';
   h+='<div style="margin:8px 0">';
   for(const k in act.need){
@@ -2048,27 +2087,43 @@ async function gongdiHtml(body){
   }
   h+='</div>';
   const contrib=Object.values(act.contributors||{}).sort((a,b)=>b.amt-a.amt).slice(0,3);
-  if(contrib.length) h+='<div class="hint">功臣榜：'+contrib.map(c=>esc((c.name||'卿')+' +'+c.amt)).join(' · ')+'</div>';
+  if(contrib.length) h+='<div class="hint">拨付功臣：'+contrib.map(c=>esc((c.name||'卿')+' +'+c.amt)).join(' · ')+'</div>';
   h+='</div>';
   if(running){
     const leftT=new Date(running.ends_at)-Date.now();
-    if(leftT<=0) h+='<button class="minor" data-settle="'+running.id+'" style="border-color:var(--seal);color:#d49a8a">领 工 钱（役毕）</button>';
-    else h+='<div class="hint">服役中（'+(RES.find(x=>x.k===running.war_side)||{n:''}).n+'）· 约剩 '+Math.ceil(leftT/3600000)+' 小时可领工钱</div>';
+    if(leftT<=0) h+='<button class="minor" data-settle="'+running.id+'" style="border-color:var(--seal);color:#d49a8a">收 工（役毕，产出入国库）</button>';
+    else h+='<div class="hint">服役中（'+(RES.find(x=>x.k===running.war_side)||{n:''}).n+'）· 约剩 '+Math.ceil(leftT/3600000)+' 小时</div>';
   } else if(laboredToday){
-    h+='<div class="hint">今日已服过役——体力有限，明日再来（AI 之卿们仍在出工）。</div>';
+    h+='<div class="hint">今日已服役——明日再来（AI 之卿们仍在收集与拨付）。</div>';
   } else {
     h+='<div class="choices">';
     for(const r0 of RES){
-      h+='<button class="minor" data-labor="'+r0.k+'" data-choice="0">尽力服役 · '+r0.n+'（4 小时工时，产出高有风险）</button>';
+      h+='<button class="minor" data-labor="'+r0.k+'" data-choice="0">尽力收集 · '+r0.n+'（4 小时，产出高有风险）</button>';
     }
     h+='</div><div class="hint">帮工（即完、稳成、产出少）：';
     h+=RES.map(r0=>'<button class="minor" data-labor2="'+r0.k+'">帮工·'+r0.n+'</button>').join(' ')+'</div>';
   }
+  h+='<div class="choices"><button class="minor" data-alloc="1" style="border-color:var(--seal);color:#d49a8a">全力赶工（拨国库之积入工事 · 今日限 800）</button></div>';
   body.innerHTML=h;
   body.querySelectorAll('button[data-settle]').forEach(bt=>{ bt.onclick=async()=>{ const r=(await dbRead('player_tasks', q=>q.eq('id',+bt.dataset.settle)))[0]; if(r){ await settleLabor(r); openBuilding('gongdi'); } }; });
   body.querySelectorAll('button[data-labor]').forEach(bt=>{ bt.onclick=()=>{ startLabor(bt.dataset.labor, 0); }; });
   body.querySelectorAll('button[data-labor2]').forEach(bt=>{ bt.onclick=()=>{ startLabor(bt.dataset.labor2, 1); }; });
+  body.querySelectorAll('button[data-alloc]').forEach(bt=>{ bt.onclick=async()=>{
+    if(!requirePlay()) return;
+    try{
+      const used = (await dbRead('player_actions', q=>q.eq('token',player.token).eq('action_type','alloc').order('created_at',{ascending:false}).limit(10))).filter(a=>new Date(a.created_at)>new Date(Date.now()-86400000)).reduce((sA,a)=>sA+(a.amount||0),0);
+      const remain = 800-used;
+      if(remain<=0){ toast('今日拨付额度已尽（800）——明日再来'); return; }
+      const r = await allocToProj(remain);
+      if(!r.ok){ toast(r.msg); return; }
+      await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'alloc', dim:'proj', amount:r.moved, note:'赶工拨付+'+r.moved});
+      toast('已拨付 '+r.moved+' 单位至工事'); sfx('ok');
+      if(r.finished){ toast('🎉 工事【'+r.proj.name+'】告竣！国力大赏已颁'); sfx('rank'); }
+      openBuilding('gongdi');
+    }catch(e){ toast('拨付失败：'+(e.message||'未知')); }
+  }; });
 }
+
 async function startLabor(resource, choice){
   if(!requirePlay()) return;
   if(busy) return; busy=true; showLoading('役');
@@ -2079,14 +2134,12 @@ async function startLabor(resource, choice){
       toast('已赴工地服役——4 小时工时后回来领工钱');
       renderTasks();
     } else {
-      const ok = true; const amt = 90;
-      const r = await projAdd(resource, amt, player.token);
-      if(!r.ok){ toast('役账更新失败'); busy=false; hideLoading(); return; }
+      const amt = 90;
+      if(!await resAdd(resource, amt)){ toast('国库账繁忙'); busy=false; hideLoading(); return; }
       const { data:pv } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta:1 });
       if(typeof pv==='number') player={...player, prestige:pv};
-      await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'labor', dim:'proj', amount:amt, note:'帮工【'+r.proj.name+'】·'+(RES.find(x=>x.k===resource)||{n:resource}).n+'+'+amt });
-      toast('帮工毕：'+(RES.find(x=>x.k===resource)||{n:''}).n+'+'+amt);
-      if(r.finished){ toast('🎉 工事【'+r.proj.name+'】告竣！'); sfx('rank'); }
+      await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'labor', dim:'proj', amount:amt, note:'帮工·收集'+(RES.find(x=>x.k===resource)||{n:resource}).n+'+'+amt });
+      toast('帮工毕：'+(RES.find(x=>x.k===resource)||{n:''}).n+'+'+amt+' 已入国库');
       sfx('ok'); renderAll();
     }
   }catch(e){ toast('服役失败：'+(e.message||'未知错误')); }
