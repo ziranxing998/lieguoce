@@ -1417,11 +1417,15 @@ async function restoreAuth(){
     const provider = url.searchParams.get('provider');
     if(provider==='workbuddy' && typeof cloud.auth.handleWorkBuddyCallback==='function'){
       const { data:session, error } = await cloud.auth.handleWorkBuddyCallback.call(cloud.auth);
-      if(error){ showAuth('登录失败：'+error.message); return; }
+      if(error){ showAuth('登录失败：'+(error.message||'未知错误')+' —— 请回到本页重新点击登录重试一次；反复失败请改用手机验证码。'); return; }
       if(session && session.user){
         for(const k of ['code','state','provider','error','error_description']) url.searchParams.delete(k);
         history.replaceState(null,'',url.pathname+url.search+url.hash);
         await enterLoggedIn(session.user.id); return;
+      }
+      if(url.searchParams.has('code')){
+        showAuth('授权交换未完成（本地凭证丢失）。常见原因：授权是在新标签页或内嵌窗口里完成的——请回到发起登录的原标签页重新点击「WorkBuddy 账号登录」，或改用手机验证码登录。');
+        return;
       }
     }else if(provider){ showAuth('该登录方式暂不可用，请用手机验证码'); return; }
   }
@@ -1468,13 +1472,22 @@ async function phoneLogin(){
   }catch(e){ hideLoading(); toast('验证失败：'+(e.message||'未知错误')); }
 }
 async function wbLogin(){
+  const hint = (t)=>{ const el=$('authHint'); if(el) el.textContent=t; };
   try{
-    const back = new URL(location.origin);
-    for(const k of ['code','state','provider','error']) back.searchParams.delete(k);
+    const back = new URL(location.href); // 保留业务参数（sharecode 等），仅清授权回调参数
+    for(const k of ['code','state','provider','error','error_description']) back.searchParams.delete(k);
+    hint('正在打开 WorkBuddy 授权页…（请勿关闭本页）');
     const { data, error } = await cloud.auth.signInWithOAuth({ provider:'workbuddy', redirectTo:back.toString() });
-    if(error){ toast('无法发起 WorkBuddy 登录：'+error.message); return; }
+    if(error){
+      hint('WorkBuddy 登录发起失败：'+(error.message||'未知错误')+' —— 若提示「未打开」，请到 WorkBuddy 云服务管理页开启本应用的 WorkBuddy 登录开关；或改用手机验证码登录。');
+      return;
+    }
+    if(!data || !data.url){
+      hint('WorkBuddy 登录未返回授权地址（可能本应用未开启 WorkBuddy 登录，或当前浏览器限制了跳转）——请改用手机验证码登录。');
+      return;
+    }
     location.assign(data.url);
-  }catch(e){ toast('无法发起 WorkBuddy 登录：'+(e.message||'未知错误')); }
+  }catch(e){ hint('WorkBuddy 登录发起失败：'+(e.message||'未知错误')+' —— 可改用手机验证码登录。'); }
 }
 async function doLogout(){
   try{ await cloud.auth.signOut(); }catch(e){}
