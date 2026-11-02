@@ -1003,7 +1003,7 @@ async function settleTask(row, viaKeqing){
     const dimResMap = {military:'stone', economy:'grain', livelihood:'wood', culture:'wood', diplomacy:'grain'};
     let rAmt = 30;
     if(hasSkill('lianheng') && dimKey==='diplomacy') rAmt = Math.round(rAmt*1.3);
-    await resAdd(dimResMap[dimKey]||'grain', rAmt);
+    await perAdd(dimResMap[dimKey]||'grain', rAmt); // 所得归私产
     // 声望更新
     let gain = ((ok ? 4 : 2) + (hasSkill('xunming')?1:0) + (hasSkill('fushu')?1:0));
     if(hasSkill('haoran')) gain = Math.round(gain*1.5); // 浩然之气：声望倍增 // 声望与国力解耦+修业加成
@@ -1197,6 +1197,9 @@ async function renderTasks(){
   if(window._proj && !window._proj.done){ const tn=Object.values(window._proj.need).reduce((a,b)=>a+b,0), th=Object.keys(window._proj.need).reduce((a,k)=>a+(window._proj.have[k]||0),0); clock += '<div class="hint">🏛 全国工事【'+esc(window._proj.name)+'】总进度 '+Math.min(100,Math.round(th/tn*100))+'% —— 城中「工地」可服役</div>'; }
   }
   if(player && !spectate){
+    let p0={wood:0,grain:0,stone:0};
+    if(player && player.resources){ try{ p0={...p0, ...JSON.parse(player.resources)}; }catch(e){} }
+    clock += '<div class="hint">🎒 私产：木 '+(p0.wood||0)+' · 粮 '+(p0.grain||0)+' · 石 '+(p0.stone||0)+'</div>';
     let r0={wood:0,grain:0,stone:0};
     if(nation && nation.resources){ try{ r0={...r0, ...JSON.parse(nation.resources)}; }catch(e){} }
     clock += '<div class="hint">📦 国库：木 '+(r0.wood||0)+' · 粮 '+(r0.grain||0)+' · 石 '+(r0.stone||0)+'</div>';
@@ -1750,7 +1753,7 @@ const SCENE_SPOTS = [
 const SCENE_ALL = SCENE_BUILDINGS.concat(SCENE_SPOTS);
 function bDoor(b){ return {x:b.x + b.w/2, y:b.y + b.h + 14}; }
 let sceneActive=false, sceneKeys={}, sceneTarget=null, scenePhase=0, sceneNear=null, sceneLast=0;
-function sceneBuildingOf(k){ return SCENE_BUILDINGS.find(b=>b.k===k); }
+function sceneBuildingOf(k){ return SCENE_ALL.find(b=>b.k===k); } // 修复：采集点也在 SCENE_ALL
 function todayDailyBuilding(){
   const ev = DAILY_EVENTS[(new Date().getDate() + nation.xun*3 + player.token.length) % DAILY_EVENTS.length];
   return ev.o[0].dim || 'economy';
@@ -1776,8 +1779,8 @@ function updateSceneHud(){
   }
   var marks=sceneMarks();
   t+=' · 人口 '+(nation.pop||200)+' 万';
-  let rr0={wood:0,grain:0,stone:0}; if(nation.resources){ try{ rr0={...rr0,...JSON.parse(nation.resources)}; }catch(e){} }
-  t+=' · 🪵'+(rr0.wood||0)+' 🌾'+(rr0.grain||0)+' 🪨'+(rr0.stone||0);
+  let pp0={wood:0,grain:0,stone:0}; if(player.resources){ try{ pp0={...pp0,...JSON.parse(player.resources)}; }catch(e){} }
+  t+=' · 私产 🪵'+(pp0.wood||0)+' 🌾'+(pp0.grain||0)+' 🪨'+(pp0.stone||0);
   if(marks.settle) t+=' · 有差事待验收';
   el.textContent=t;
 }
@@ -2024,7 +2027,7 @@ async function settleLabor(row){
   amt = Math.round(amt*(1+gatherBonus()));
   const resK = row.war_side;
   const resName = (RES.find(x=>x.k===resK)||{n:resK}).n;
-  if(!await resAdd(resK, amt)){ toast('国库账繁忙，稍后再试'); return; }
+    if(!await perAdd(resK, amt)){ toast('私产账繁忙，稍后再试'); return; }
   const { data:pv, error:e2 } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta: ok?3:1 });
   if(!e2){ player = {...player, prestige:pv}; }
   await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'labor', dim:'proj', amount:amt, note:'服役·收集'+resName+'+'+amt+(ok?'':'·事有蹉跎') });
@@ -2051,6 +2054,29 @@ async function resSave(res){
   return false;
 }
 async function resAdd(resK, amt){ const r = await resLoad(); r[resK]=Math.min(30000,(r[resK]||0)+amt); return await resSave(r); }
+async function perLoad(){ let r={wood:0,grain:0,stone:0}; if(player && player.resources){ try{ r={...r, ...JSON.parse(player.resources)}; }catch(e){} } return r; }
+async function perSave(res){
+  for(let i=0;i<3;i++){
+    const raw = player.resources==null? null : player.resources;
+    let q = cloud.database.from('players').update({resources:JSON.stringify(res)}).eq('id',player.id);
+    if(raw===null){ q=q.is('resources',null); } else { q=q.eq('resources',raw); }
+    const { data:cas, error:casErr } = await q.select();
+    if(!casErr && cas && cas.length){ player={...player, resources:JSON.stringify(res)}; return true; }
+    const pu = (await dbRead('players', q0=>q0.eq('id',player.id)))[0];
+    if(pu){ player = pu; try{ res = {...{wood:0,grain:0,stone:0}, ...JSON.parse(player.resources||'{}')}; }catch(e){} }
+  }
+  return false;
+}
+async function perAdd(resK, amt){ const r = await perLoad(); r[resK]=Math.max(0,Math.min(30000,(r[resK]||0)+amt)); return await perSave(r); }
+async function donateToNation(resK){
+  const my = await perLoad();
+  const amt = Math.floor(my[resK]||0);
+  if(amt<=0) return {ok:false, msg:'私产没有可捐的'};
+  if(!await perAdd(resK, -amt)) return {ok:false, msg:'私产账繁忙'};
+  if(!await resAdd(resK, amt)){ await perAdd(resK, amt); return {ok:false, msg:'国库账繁忙'}; }
+  await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'donate', dim:resK, amount:amt, note:'捐输'+((RES.find(x=>x.k===resK)||{n:resK}).n)+'+'+amt+' 入国库'});
+  return {ok:true, amt:amt};
+}
 async function allocToProj(total, allocBonus){
   let arr = await loadProj();
   const act = arr.find(pr=>!pr.done);
@@ -2130,7 +2156,10 @@ async function gongdiHtml(body){
   await ensureProject();
   const stock = await resLoad();
   const act = window._proj || (await loadProj()).find(pr=>!pr.done);
-  let h='<div class="task"><div class="thead"><span><span class="tname">🏛 国 库</span><span class="tag wen">常驻</span></span><small style="color:var(--ink-dim)">人口 '+(nation.pop||200)+' 万 · 收集涨库 · 建造与战争耗库</small></div>';
+  const myP = await perLoad();
+  let h='<div class="task"><div class="thead"><span><span class="tname">🎒 我 的 私 产</span><span class="tag wen">个人</span></span><small style="color:var(--ink-dim)">采集/办差所得 · 可捐输国库 · 修业耗私产</small></div>'
+    + '<div style="margin:8px 0">'+RES.map(r0=>'<div style="margin:4px 0"><small>'+r0.n+'：<b>'+(myP[r0.k]||0)+'</b> <button class="minor" data-donate="'+r0.k+'" style="font-size:11px;padding:2px 8px">捐输国库</button></small></div>').join('')+'</div></div>'
+  h+='<div class="task"><div class="thead"><span><span class="tname">🏛 国 库</span><span class="tag wen">常驻</span></span><small style="color:var(--ink-dim)">人口 '+(nation.pop||200)+' 万 · 收集涨库 · 建造与战争耗库</small></div>';
   h+='<div style="margin:8px 0">'+RES.map(r0=>'<div style="margin:4px 0"><small>'+r0.n+'：<b>'+(stock[r0.k]||0)+'</b></small></div>').join('')+'</div></div>';
   if(!act){ body.innerHTML=h+'<div class="hint">当前无工事——等君上下一道诏令。</div>'; return; }
   const totalNeed = Object.values(act.need).reduce((a,b)=>a+b,0);
@@ -2172,6 +2201,7 @@ async function gongdiHtml(body){
   body.querySelectorAll('button[data-settle]').forEach(bt=>{ bt.onclick=async()=>{ const r=(await dbRead('player_tasks', q=>q.eq('id',+bt.dataset.settle)))[0]; if(r){ await settleLabor(r); openBuilding('gongdi'); } }; });
   body.querySelectorAll('button[data-labor]').forEach(bt=>{ bt.onclick=()=>{ startLabor(bt.dataset.labor, 0); }; });
   body.querySelectorAll('button[data-labor2]').forEach(bt=>{ bt.onclick=()=>{ startLabor(bt.dataset.labor2, 1); }; });
+  body.querySelectorAll('button[data-donate]').forEach(bt=>{ bt.onclick=async()=>{ bt.disabled=true; const r0=await donateToNation(bt.dataset.donate); toast(r0.ok?('捐输成功：+ '+r0.amt+' 入国库'):r0.msg); openBuilding('gongdi'); }; });
   body.querySelectorAll('button[data-alloc]').forEach(bt=>{ bt.onclick=async()=>{
     if(!requirePlay()) return;
     try{
@@ -2199,7 +2229,7 @@ async function startLabor(resource, choice){
       renderTasks();
     } else {
       const amt = 90;
-      if(!await resAdd(resource, amt)){ toast('国库账繁忙'); busy=false; hideLoading(); return; }
+      if(!await perAdd(resource, amt)){ toast('私产账繁忙'); busy=false; hideLoading(); return; }
       const { data:pv } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta:1 });
       if(typeof pv==='number') player={...player, prestige:pv};
       await cloud.database.from('player_actions').insert({ token:player.token, nation_key:player.nation_key, xun:nation.xun, decree_id:(decree&&decree.id)||null, action_type:'labor', dim:'proj', amount:amt, note:'帮工·收集'+(RES.find(x=>x.k===resource)||{n:resource}).n+'+'+amt });
@@ -2333,7 +2363,8 @@ async function gatherHtml(b){
   let mine=[]; try{ mine=(await dbRead('player_tasks', q=>q.eq('token',player.token).eq('dim','gather'))).filter(r=>r.status!=='done'||new Date(r.started_at)>new Date(Date.now()-86400000)); }catch(e){}
   const run = mine.find(r=>r.status==='running');
   let h='<div class="task"><div class="thead"><span><span class="tname">'+b.icon+' '+b.name+'</span><span class="tag wen">采集</span></span><small style="color:var(--ink-dim)">按分钟进账 · 随时结算</small></div>';
-  h+='<div class="tdesc">此地出产'+resName+'。基础速率 '+GATHER_RATE+'/分钟'+(gatherBonus()>0?'（修业加成后 '+ (Math.round(GATHER_RATE*(1+gatherBonus())*100)/100) +'/分钟）':'')+'。</div>';
+  const myStock = await perLoad();
+  h+='<div class="tdesc">此地出产'+resName+'。基础速率 '+GATHER_RATE+'/分钟'+(gatherBonus()>0?'（修业加成后 '+ (Math.round(GATHER_RATE*(1+gatherBonus())*100)/100) +'/分钟）':'')+'。</div><div class="hint">你私产现有 '+resName+'：'+(myStock[resK]||0)+'</div>';
   if(run){
     h+='<div id="gatherLive" class="result ok">…</div>';
     h+='<div class="choices"><button class="minor" data-gstop="'+run.id+'" style="border-color:var(--seal);color:#d49a8a">结算入库（离手）</button></div>';
@@ -2373,7 +2404,7 @@ async function settleGather(row){
     const mins = Math.max(0,(Date.now()-new Date(row.started_at))/60000);
     const amt = Math.floor(mins*GATHER_RATE*(1+gatherBonus()));
     if(amt<=0){ busy=false; hideLoading(); toast('才刚开工，尚无所得'); return; }
-    if(!await resAdd(row.war_side, amt)){ toast('国库账繁忙'); busy=false; hideLoading(); return; }
+    if(!await perAdd(row.war_side, amt)){ toast('私产账繁忙'); busy=false; hideLoading(); return; }
     await cloud.database.from('player_tasks').update({status:'done'}).eq('id',row.id);
     await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'gather', dim:'gather', amount:amt, note:'采集'+((RES.find(x=>x.k===row.war_side)||{n:row.war_side}).n)+'+'+amt});
     toast('入库：'+((RES.find(x=>x.k===row.war_side)||{n:''}).n)+'+'+amt);
@@ -2472,10 +2503,10 @@ async function learnSkill(id){
     if(sk.exclusive && player.school!==sk.school) throw new Error('独门绝学——须拜入本派');
     if(mySkills().includes(id)) throw new Error('已修此业');
     const disc = hasSkill('youjiao')?0.8:1;
-    const stock = await resLoad();
-    for(const k in sk.cost){ if((stock[k]||0) < Math.round(sk.cost[k]*disc)) throw new Error('国库资源不足——办差与收集可攒资源'); }
+    const stock = await perLoad();
+    for(const k in sk.cost){ if((stock[k]||0) < Math.round(sk.cost[k]*disc)) throw new Error('私产资源不足——采集与办差可攒私产'); }
     for(const k in sk.cost){ stock[k]-=Math.round(sk.cost[k]*disc); }
-    if(!await resSave(stock)) throw new Error('国库账繁忙');
+    if(!await perSave(stock)) throw new Error('私产账繁忙');
     const arr = mySkills(); arr.push(id);
     const { data:up, error:ue } = await cloud.database.from('players').update({skills:JSON.stringify(arr)}).eq('id',player.id).select();
     if(ue) throw ue;
