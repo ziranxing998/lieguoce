@@ -799,12 +799,12 @@ async function mediate(){
   busy = true; showLoading('奔 走 斡 旋');
   try{
     const acted = await dbRead('player_actions', q=>q.eq('token',player.token).eq('xun',nation.xun).eq('action_type','mediate'));
-    if(acted.length >= (hasSkill('hezong')?2:1)){ busy=false; hideLoading(); toast('本旬已斡旋过，且待下旬'); return; }
+    if(acted.length >= (hasSkill('zongheng')?3:(hasSkill('hezong')?2:1))){ busy=false; hideLoading(); toast('本旬已斡旋过，且待下旬'); return; }
     const d = await loadDiplo();
     const keys = Object.keys(d);
     const worst = keys.reduce((a,b)=> d[a]<=d[b]?a:b);
-    let pM = 0.7; if(hasSkill('youshui')) pM += 0.10; if(hasSkill('liyue')) pM += 0.15; const ok = Math.random()<pM;
-    if(ok){ d[worst] = Math.min(0, d[worst]+8); }
+    let pM = 0.7; if(hasSkill('youshui')) pM += 0.10; if(hasSkill('liyue')) pM += 0.15; if(hasSkill('haoran')) pM = 1; const ok = Math.random()<pM;
+    if(ok){ d[worst] = Math.min(0, d[worst]+8+(hasSkill('zongheng')?6:0)); }
     else { d[worst] = d[worst]-2; }
     await saveDiplo(d);
     await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'mediate', dim:'diplomacy', amount:ok?8:-2, note:`斡旋${worst.replace('-','·')}${ok?'·成':'·败'}`});
@@ -977,6 +977,8 @@ async function settleTask(row, viaKeqing){
     let pOk = 0.78;
     if(hasSkill('bianfa')) pOk += 0.05;
     if(hasSkill('wuwei') && row.dim==='military') pOk += 0.08;
+    if(hasSkill('xingfa') && row.choice===0) pOk = 1;
+    if(hasSkill('sunwu') && row.dim==='military') pOk = 1;
     const ok = row.choice===0 ? (Math.random()<pOk) : true; // 尽心办有风险；循例办必成（GDD-S12 勘误采纳+修业加成）
     const amt = ok ? row.reward : Math.ceil(row.reward*0.4);
     const dimKey = row.dim;
@@ -987,6 +989,9 @@ async function settleTask(row, viaKeqing){
     if(row.war_side==='attack'){ if(hasSkill('yunti')) wb += 0.20; if(hasSkill('gongcheng')) wb += 0.15; }
     if(row.war_side==='defender' && hasSkill('moshou')) wb += 0.20;
     if(hasSkill('miaosuan')) wb = Math.max(wb, 0.3);
+    if(hasSkill('sunwu')) wb = Math.max(wb, 0.6);
+    if(row.war_side==='defender' && hasSkill('moyu')) wb += 0.40;
+    if(row.war_side==='attack' && hasSkill('banshen')) wb += 0.40;
     const delta = Math.round((row.war_side==='attack' ? amt : -amt) * (1+wb));
       const { data:wr, error:we } = await cloud.database.rpc('bump_war', { p_delta:delta });
       if(we) throw we;
@@ -1038,7 +1043,8 @@ async function settleTask(row, viaKeqing){
     if(hasSkill('lianheng') && dimKey==='diplomacy') rAmt = Math.round(rAmt*1.3);
     await resAdd(dimResMap[dimKey]||'grain', rAmt);
     // 声望更新
-    const gain = (ok ? 4 : 2) + (hasSkill('xunming')?1:0) + (hasSkill('fushu')?1:0); // 声望与国力解耦+修业加成
+    let gain = ((ok ? 4 : 2) + (hasSkill('xunming')?1:0) + (hasSkill('fushu')?1:0));
+    if(hasSkill('haoran')) gain = Math.round(gain*1.5); // 浩然之气：声望倍增 // 声望与国力解耦+修业加成
     const { data:pv, error:e2 } = await cloud.database.rpc('bump_prestige', { p_player:player.id, p_delta:gain });
     if(e2) throw e2;
     const oldRank = rankOf(player.prestige).n;
@@ -2048,7 +2054,7 @@ async function ensureProject(){
 
 
 async function settleLabor(row){
-  const ok = row.choice===0 ? (Math.random()<0.78) : true;
+  const ok = hasSkill('houji') || (row.choice===0 ? (Math.random()<0.78) : true); // 后稷再世：服役不蹉跎
   let amt = ok ? (row.choice===0? 260 : 90) : Math.round(90*0.4);
   if(hasSkill('gouxu') && row.choice===0) amt = Math.round(amt*1.15);
   if(hasSkill('shuzhi') && row.choice===1) amt = Math.round(amt*1.25);
@@ -2210,7 +2216,7 @@ async function gongdiHtml(body){
       const used = (await dbRead('player_actions', q=>q.eq('token',player.token).eq('action_type','alloc').order('created_at',{ascending:false}).limit(10))).filter(a=>new Date(a.created_at)>new Date(Date.now()-86400000)).reduce((sA,a)=>sA+(a.amount||0),0);
       const remain = 800-used;
       if(remain<=0){ toast('今日拨付额度已尽（800）——明日再来'); return; }
-      const r = await allocToProj(remain, (hasSkill('qixie')?0.20:0)+(hasSkill('jiguan')?0.15:0));
+      const r = await allocToProj(remain, (hasSkill('qixie')?0.20:0)+(hasSkill('jiguan')?0.15:0)+(hasSkill('moyu')?0.40:0)+(hasSkill('banshen')?0.50:0));
       if(!r.ok){ toast(r.msg); return; }
       await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'alloc', dim:'proj', amount:r.moved, note:'赶工拨付+'+r.moved});
       toast('已拨付 '+r.moved+' 单位至工事'); sfx('ok');
@@ -2347,11 +2353,18 @@ const SKILLS = [
  {id:'liyue',    school:'儒家',   name:'礼乐教化', desc:'文之以礼乐——斡旋成功率 +15%。', cost:{grain:800,wood:400}, req:['fushu']},
  {id:'youshui',  school:'纵横家', name:'游说之术', desc:'一言兴邦，一言丧邦——斡旋成功率 +10%。', cost:{grain:300,wood:150}, req:[]},
  {id:'hezong',   school:'纵横家', name:'合纵',     desc:'六国合纵相印——每旬可斡旋两次。', cost:{grain:500,stone:250}, req:['youshui']},
- {id:'lianheng', school:'纵横家', name:'连横',     desc:'事一强以攻众弱——外交类差事资源收益 +30%。', cost:{grain:700,wood:350}, req:['hezong']},
+  {id:'lianheng', school:'纵横家', name:'连横',     desc:'事一强以攻众弱——外交类差事资源收益 +30%。', cost:{grain:700,wood:350}, req:['hezong']},
+  {id:'houji',   school:'农家',   exclusive:true, name:'后稷再世', desc:'独门绝学·须拜入农家。农圣亲传——采集速率翻倍，服役不再蹉跎。', cost:{grain:1200,wood:600}, req:['xiangdi']},
+  {id:'xingfa',  school:'法家',   exclusive:true, name:'刑名法术', desc:'独门绝学·须拜入法家。申君商君之法——尽心办必成。', cost:{grain:1500,stone:800}, req:['bianfa']},
+  {id:'sunwu',   school:'兵家',   exclusive:true, name:'孙吴遗策', desc:'独门绝学·须拜入兵家。得孙武吴起真传——会战加成冠绝当世，武事必成。', cost:{stone:1200,grain:800}, req:['miaosuan']},
+  {id:'moyu',    school:'墨家',   exclusive:true, name:'守圉之器', desc:'独门绝学·须拜入墨家。墨翟守械十二种——守城、赶工皆大增。', cost:{stone:1200,wood:800}, req:['jianai']},
+  {id:'banshen', school:'公输家', exclusive:true, name:'班门神工', desc:'独门绝学·须拜入公输家。公输亲授——赶工巨增，攻城大增。', cost:{wood:1500,stone:900}, req:['gongcheng']},
+  {id:'haoran',  school:'儒家',   exclusive:true, name:'浩然之气', desc:'独门绝学·须拜入儒家。孟子养气——斡旋必成，声望倍增。', cost:{grain:1500,wood:800}, req:['liyue']},
+  {id:'zongheng',school:'纵横家', exclusive:true, name:'捭阖天下', desc:'独门绝学·须拜入纵横家。捭阖之术——每旬斡旋三次，成功时邦交大进。', cost:{grain:1200,wood:600}, req:['lianheng']},
 ];
 function mySkills(){ try{ return JSON.parse((player&&player.skills)||'[]'); }catch(e){ return []; } }
 function hasSkill(id){ return mySkills().indexOf(id)>=0; }
-function gatherBonus(){ let b=0; if(hasSkill('shennong')) b+=0.30; if(hasSkill('gouxu')) b+=0.15; return b; }
+function gatherBonus(){ let b=0; if(hasSkill('shennong')) b+=0.30; if(hasSkill('gouxu')) b+=0.15; if(hasSkill('houji')) b+=1.0; return b; }
 async function gatherHtml(b){
   const resK = b.res;
   const resName = (RES.find(x=>x.k===resK)||{n:resK}).n;
@@ -2410,20 +2423,35 @@ function gatherSpotKey(resK){ return resK==='grain'?'farm':(resK==='wood'?'fores
 async function academyHtml(body){
   const mine = mySkills();
   const disc = hasSkill('youjiao')?0.8:1;
-  let h = '<div class="panel-title"><span>诸 子 百 家 · 修 业</span><small>人人可兼修 · 修业耗国库资源</small></div>';
+  const cur = player.school || null;
+  let h = '<div class="panel-title"><span>诸 子 百 家 · 修 业</span><small>诸术可兼修 · 独门绝学唯本派可修</small></div>';
+  h += '<div class="task"><div class="thead"><span><span class="tname">你是谁家门徒？</span><span class="tag wen">门籍</span></span>'
+    +'<small style="color:var(--ink-dim)">'+(cur?('已拜入【'+cur+'】'):'尚无门派')+'</small></div>';
+  h += '<div class="tdesc">独门绝学唯本派弟子可修；叛出师门即失去其独门（诸术仍存），史笔录之。</div>';
+  h += '<div class="choices">';
+  for(const sch of ['农家','法家','兵家','墨家','公输家','儒家','纵横家']){
+    if(sch===cur) continue;
+    h += '<button class="minor" data-join="'+sch+'">'+(cur?('叛出旧家 · 改投'+sch):('拜入'+sch))+'</button>';
+  }
+  if(cur){
+    const exCur = SKILLS.find(x=>x.school===cur && x.exclusive);
+    h += '<button class="minor" data-leave="1" style="border-color:#5a3228;color:#a3705e">叛出'+cur+'（失其独门'+(exCur?('【'+exCur.name+'】'):'')+'）</button>';
+  }
+  h += '</div></div>';
   const schools = {};
   for(const sk of SKILLS){ (schools[sk.school]=schools[sk.school]||[]).push(sk); }
   for(const sch in schools){
-    h += '<div class="task"><div class="thead"><span><span class="tname">'+sch+'</span></span></div>';
+    h += '<div class="task"><div class="thead"><span><span class="tname">'+sch+(cur===sch?' <span class="tag wu">本门</span>':'')+'</span></span></div>';
     for(const sk of schools[sch]){
       const got = mine.includes(sk.id);
       const okReq = sk.req.every(r0=>mine.includes(r0));
       const costStr = Object.keys(sk.cost).map(k=>(RES.find(x=>x.k===k)||{n:k}).n+Math.round(sk.cost[k]*disc)).join(' ');
       h += '<div style="margin:6px 0;padding-left:6px;border-left:3px solid '+(got?'var(--seal)':'#8a6f4d')+'">';
-      h += '<div><b>'+(got?'✦ ':'')+sk.name+'</b> <small style="color:var(--ink-dim)">'+costStr+'</small></div>';
+      h += '<div><b>'+(got?'✦ ':'')+(sk.exclusive?'【独门】':'')+sk.name+'</b> <small style="color:var(--ink-dim)">'+costStr+'</small></div>';
       h += '<div class="tdesc">'+sk.desc+'</div>';
       if(!got){
-        h += okReq ? '<button class="minor" data-learn="'+sk.id+'">修 业</button>' : '<div class="hint">需先修「'+(SKILLS.find(x=>x.id===sk.req[0])||{name:sk.req[0]}).name+'」</div>';
+        if(sk.exclusive && cur!==sk.school) h += '<div class="hint">独门——须拜入本派方可修习</div>';
+        else h += okReq ? '<button class="minor" data-learn="'+sk.id+'">修 业</button>' : '<div class="hint">需先修「'+(SKILLS.find(x=>x.id===sk.req[0])||{name:sk.req[0]}).name+'」</div>';
       }
       h += '</div>';
     }
@@ -2431,7 +2459,47 @@ async function academyHtml(body){
   }
   body.innerHTML = h;
   body.querySelectorAll('button[data-learn]').forEach(bt=>{ bt.onclick=()=>learnSkill(bt.dataset.learn); });
+  body.querySelectorAll('button[data-join]').forEach(bt=>{ bt.onclick=()=>joinSchool(bt.dataset.join); });
+  body.querySelectorAll('button[data-leave]').forEach(bt=>{ bt.onclick=()=>leaveSchool(); });
 }
+async function joinSchool(sch){
+  if(!requirePlay()) return;
+  if(busy) return; busy=true; showLoading('拜 师');
+  try{
+    const cur = player.school || null;
+    let newSkills = mySkills();
+    if(cur && cur!==sch){
+      const ex = SKILLS.find(x=>x.school===cur && x.exclusive);
+      if(ex) newSkills = newSkills.filter(x=>x!==ex.id);
+      await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'school', dim:'school', amount:0, note:'叛出'+cur+'，改投'+sch+(ex?('，失其独门【'+ex.name+'】'):'')});
+    }
+    const { data:up, error:ue } = await cloud.database.from('players').update({school:sch, skills:JSON.stringify(newSkills)}).eq('id',player.id).select();
+    if(ue) throw ue;
+    player = up && up[0];
+    toast('已拜入【'+sch+'】！'+(cur&&cur!==sch?'旧门绝学已随叛出而失':''));
+    sfx('rank'); renderAll(); openBuilding('xuegong');
+  }catch(e){ toast('拜师失败：'+(e.message||'未知')); }
+  hideLoading(); busy=false;
+}
+async function leaveSchool(){
+  if(!requirePlay()) return;
+  if(busy) return; busy=true; showLoading('叛 门');
+  try{
+    const cur = player.school || null;
+    if(!cur) throw new Error('本无门派');
+    const ex = SKILLS.find(x=>x.school===cur && x.exclusive);
+    let newSkills = mySkills();
+    if(ex) newSkills = newSkills.filter(x=>x!==ex.id);
+    const { data:up, error:ue } = await cloud.database.from('players').update({school:null, skills:JSON.stringify(newSkills)}).eq('id',player.id).select();
+    if(ue) throw ue;
+    player = up && up[0];
+    await cloud.database.from('player_actions').insert({token:player.token, nation_key:player.nation_key, xun:nation.xun, action_type:'school', dim:'school', amount:0, note:'叛出'+cur+(ex?('，失其独门【'+ex.name+'】'):'')});
+    toast('叛出'+cur+(ex?('——失其独门【'+ex.name+'】'):''));
+    renderAll(); openBuilding('xuegong');
+  }catch(e){ toast('叛门失败：'+(e.message||'未知')); }
+  hideLoading(); busy=false;
+}
+
 async function learnSkill(id){
   const sk = SKILLS.find(x=>x.id===id);
   if(!sk) return;
@@ -2439,6 +2507,7 @@ async function learnSkill(id){
   if(busy) return; busy=true; showLoading('修 业');
   try{
     if(!sk.req.every(r0=>mySkills().includes(r0))) throw new Error('未达先修条件');
+    if(sk.exclusive && player.school!==sk.school) throw new Error('独门绝学——须拜入本派');
     if(mySkills().includes(id)) throw new Error('已修此业');
     const disc = hasSkill('youjiao')?0.8:1;
     const stock = await resLoad();
