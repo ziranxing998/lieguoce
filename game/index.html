@@ -147,7 +147,7 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   .warrow{color:var(--ink-dim);margin:0 4px;}
 
 /* ---- 城内场景 ---- */
-#sceneView{display:none;max-width:1020px;margin:0 auto 14px}
+#sceneView{display:none;max-width:1240px;margin:0 auto 14px}
 #game.scene-mode > .panel{display:none}
 #game.scene-mode #sceneView{display:block}
 #sceneCanvas{width:100%;border:2px solid #5a3228;border-radius:10px;background:#0e0c08;display:block;cursor:pointer}
@@ -225,9 +225,10 @@ ${l.stack}`)}else c=o?.stack??"";let f=this.url.toString().length;return o?.name
   <div id="sceneHud">
     <button class="minor" id="btnMap">🗺 舆 图</button><button class="minor" id="btnToPanels">📜 文 书</button>
     <button class="minor" id="btnSceneXun">⏭ 下一旬</button>
+    <span id="gatherChip" style="display:none;cursor:pointer;padding:3px 10px;border:1px solid var(--seal);border-radius:6px;color:#d49a8a;font-size:12px;background:rgba(166,60,42,.12)"></span>
     <span class="hint" id="sceneTip">方向键 / WASD 行走 · 走近建筑按 E 或点击进入 · 需读长文书点「文书」</span>
   </div>
-  <canvas id="sceneCanvas" width="960" height="540"></canvas>
+  <canvas id="sceneCanvas" width="1280" height="720"></canvas>
 </div>
 <div id="bMask"><div id="bModal">
   <div class="panel-title"><span id="bmTitle">—</span><small id="bmSub"></small></div>
@@ -1749,19 +1750,19 @@ function templateDailyEdict(){
 }
 /* ============ 城内场景（可操控角色 + 建筑互动） ============ */
 const SCENE_BUILDINGS = [
- {k:'chaotang', name:'朝堂', ch:'朝', x:390, y:70,  w:190, h:120, sub:'面君 · 诏书 · 上书'} ,
- {k:'junying',  name:'军营', ch:'军', x:60,  y:240, w:150, h:110, dim:'military'},
- {k:'shiji',    name:'市集', ch:'市', x:750, y:240, w:150, h:110, dim:'economy'},
- {k:'gongfang', name:'工坊', ch:'工', x:60,  y:410, w:150, h:105, dim:'livelihood'},
- {k:'xuegong',  name:'学宫', ch:'学', x:750, y:410, w:150, h:105, dim:'culture'},
- {k:'yizhan',   name:'驿站', ch:'驿', x:405, y:330, w:150, h:100, dim:'diplomacy'},
- {k:'gongdi',   name:'工地', ch:'役', x:130, y:70,  w:180, h:120, sub:'全国工事 · 服役捐输'},
+ {k:'chaotang', name:'朝堂', ch:'朝', x:520, y:93,  w:253, h:160, sub:'面君 · 诏书 · 上书'} ,
+ {k:'junying',  name:'军营', ch:'军', x:80,  y:320, w:200, h:147, dim:'military'},
+ {k:'shiji',    name:'市集', ch:'市', x:1000,y:320, w:200, h:147, dim:'economy'},
+ {k:'gongfang', name:'工坊', ch:'工', x:80,  y:547, w:200, h:140, dim:'livelihood'},
+ {k:'xuegong',  name:'学宫', ch:'学', x:1000,y:547, w:200, h:140, dim:'culture'},
+ {k:'yizhan',   name:'驿站', ch:'驿', x:540, y:440, w:200, h:133, dim:'diplomacy'},
+ {k:'gongdi',   name:'工地', ch:'役', x:173, y:93,  w:240, h:160, sub:'全国工事 · 服役捐输'},
 ];
 const SCENE_SPOTS = [
- {k:'farm',   name:'良田',   icon:'🌾', res:'grain', x:370, y:440, w:130, h:80, sub:'种地得粮'},
- {k:'forest', name:'林场',   icon:'🌲', res:'wood',  x:600, y:300, w:110, h:80, sub:'伐木得木'},
- {k:'quarry', name:'采石场', icon:'⛰',  res:'stone', x:240, y:305, w:110, h:80, sub:'采石得石'},
- {k:'goldmine',name:'淘金场', icon:'✨', res:'gold',  x:620, y:430, w:110, h:80, sub:'淘沙得金（极慢）'},
+ {k:'farm',   name:'良田',   icon:'🌾', res:'grain', x:493, y:587, w:173, h:107, sub:'种地得粮'},
+ {k:'forest', name:'林场',   icon:'🌲', res:'wood',  x:800, y:400, w:147, h:107, sub:'伐木得木'},
+ {k:'quarry', name:'采石场', icon:'⛰',  res:'stone', x:320, y:407, w:147, h:107, sub:'采石得石'},
+ {k:'goldmine',name:'淘金场', icon:'✨', res:'gold',  x:827, y:573, w:147, h:107, sub:'淘沙得金（极慢）'},
 ];
 const SCENE_ALL = SCENE_BUILDINGS.concat(SCENE_SPOTS);
 function bDoor(b){ return {x:b.x + b.w/2, y:b.y + b.h + 14}; }
@@ -1818,7 +1819,7 @@ function sceneLoop(ts){
   var P=window._scenePlayer;
   if(P){
     function collides(x0,y0){
-      for(const b of SCENE_ALL){ if(x0>b.x-8 && x0<b.x+b.w+8 && y0>b.y-8 && y0<b.y+b.h+30) return true; }
+      for(const b of SCENE_BUILDINGS){ if(x0>b.x-8 && x0<b.x+b.w+8 && y0>b.y-8 && y0<b.y+b.h+30) return true; } // 采集点可踩踏不阻挡
       return false;
     }
     function tryMove(nx0,ny0){
@@ -1845,7 +1846,7 @@ function sceneLoop(ts){
         if(sceneStall>120){ sceneTarget=null; sceneTargetBuild=null; sceneStall=0; toast('去路被挡——请绕行或点近处的目标'); }
       }
     } else P.moving=false;
-    P.x=Math.max(16,Math.min(944,P.x)); P.y=Math.max(180,Math.min(524,P.y));
+    P.x=Math.max(16,Math.min(1264,P.x)); P.y=Math.max(240,Math.min(704,P.y));
   }
   sceneNear=null;
   if(P){ var best=1e9; for(const b of SCENE_ALL){ var d0=bDoor(b); var dd=(P.x-d0.x)*(P.x-d0.x)+(P.y-d0.y)*(P.y-d0.y); if(dd<70*70 && dd<best){ best=dd; sceneNear=b; } } }
@@ -1855,18 +1856,18 @@ function sceneLoop(ts){
 }
 var sceneTargetBuild=null;
 function drawScene(ctx){
-  ctx.clearRect(0,0,960,540);
-  ctx.fillStyle='#d9c9a2'; ctx.fillRect(0,0,960,540);
+  ctx.clearRect(0,0,1280,720);
+  ctx.fillStyle='#d9c9a2'; ctx.fillRect(0,0,1280,720);
   ctx.strokeStyle='#c9b58c'; ctx.lineWidth=1;
-  for(var gy=200; gy<540; gy+=34){ ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(960,gy); ctx.stroke(); }
-  ctx.fillStyle='#cbb488'; ctx.fillRect(300,190,360,340);
-  ctx.fillStyle='#c2ab7e'; ctx.fillRect(420,190,120,340);
+  for(var gy=267; gy<720; gy+=45){ ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(1280,gy); ctx.stroke(); }
+  ctx.fillStyle='#cbb488'; ctx.fillRect(400,253,480,453);
+  ctx.fillStyle='#c2ab7e'; ctx.fillRect(560,253,160,453);
   var marks=sceneMarks();
   for(const b of SCENE_BUILDINGS){ drawBuilding(ctx,b,marks); }
   for(const sp of SCENE_SPOTS){ drawSpot(ctx, sp); }
-  drawFigure(ctx, 300, 236, '#7a4a2a', '卒');
-  drawFigure(ctx, 660, 236, '#7a4a2a', '卒');
-  drawFigure(ctx, 470, 226, '#a63c2a', '君');
+  drawFigure(ctx, 400, 315, '#7a4a2a', '卒');
+  drawFigure(ctx, 880, 315, '#7a4a2a', '卒');
+  drawFigure(ctx, 627, 301, '#a63c2a', '君');
   var P=window._scenePlayer;
   if(P) drawPlayer(ctx,P);
   if(gRun0){
@@ -2007,7 +2008,7 @@ function initSceneInput(){
   cv.addEventListener('click',e=>{
     if(!sceneActive) return;
     var r=cv.getBoundingClientRect();
-    var x=(e.clientX-r.left)*(960/r.width), y=(e.clientY-r.top)*(540/r.height);
+    var x=(e.clientX-r.left)*(cv.width/r.width), y=(e.clientY-r.top)*(cv.height/r.height);
     for(const b of SCENE_ALL){
       if(x>b.x-14 && x<b.x+b.w+14 && y>b.y-14 && y<b.y+b.h+40){
         var d0=bDoor(b);
@@ -2017,7 +2018,7 @@ function initSceneInput(){
         return;
       }
     }
-    sceneTarget={x:Math.max(16,Math.min(944,x)), y:Math.max(180,Math.min(524,y))}; sceneTargetBuild=null;
+    sceneTarget={x:Math.max(16,Math.min(1264,x)), y:Math.max(240,Math.min(704,y))}; sceneTargetBuild=null;
   });
   $('btnToPanels').onclick=exitScene;
   $('btnMap').onclick=openMap;
@@ -2692,6 +2693,18 @@ async function regentRun(manual){
   $('btnWbLogin').onclick = wbLogin;
   $('btnSpectate').onclick = ()=>{ spectate=true; startSpectate(); };
   setInterval(()=>{ if(player&&nation&&!spectate){ try{ renderTasks(); updateSceneHud(); }catch(e){} } }, 60000);
+  setInterval(()=>{ try{
+    const c0=$('gatherChip'); if(!c0) return;
+    const g0=(window._myTaskRows||[]).find(x=>x.dim==='gather'&&x.status==='running');
+    if(g0){
+      const mins=(Date.now()-new Date(g0.started_at))/60000;
+      const amt=Math.floor(mins*gatherRateOf(g0.war_side));
+      const rn=(RES.find(x=>x.k===g0.war_side)||{}).n||'';
+      c0.style.display='inline-block';
+      c0.textContent='⛏ 采集中·'+rn+' +'+amt+'（点击前往结算）';
+      c0.onclick=()=>{ const sp0=SCENE_SPOTS.find(x=>x.res===g0.war_side); if(sp0){ var d0=bDoor(sp0); sceneTarget={x:d0.x,y:d0.y+18}; sceneTargetBuild=sp0; } };
+    } else { c0.style.display='none'; }
+  }catch(e){} }, 1000);
   try{ initSceneInput(); window._scenePlayer={x:480,y:470,facing:1,moving:false}; }catch(e){}
   showLoading('开 卷');
   try{
