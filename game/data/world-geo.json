@@ -1,0 +1,68 @@
+{
+  "_meta": {
+    "name": "《列国策》真实地理数据集（战国）",
+    "compiled": "2026-11-02",
+    "sources": [
+      "Wikimedia Commons《Warring States c. 250 BC.svg》（CC0 公版，基于 Natural Earth 自然边界与 The Cambridge History of China Vol.1 p.39 疆域考据）——作为舆图底图的锁定来源（网络恢复后替换 AI 示意图）",
+      "《中国历史地图集》（谭其骧）都城位置参考（仅作学术定位，不内嵌原图）",
+      "《史记》《战国策》城邑、关隘、物产记载"
+    ],
+    "usage": "城池/路线/资源系统开发时的定位与引用数据。lat/lng 为现代坐标（WGS-84 近似）；map 为当前游戏内水墨舆图的百分比锚点（线性近似：x = 22+(lng-108.71)*4.9 / y = 48-(lat-34.33)*6.1，误差 ±4%，逐一目测校正更佳）",
+    "compliance": "历史题材专题图，不涉及现代疆界绘制；未使用任何在线地图服务"
+  },
+  "nations_capital": {
+    "qin":  { "name": "咸阳", "lat": 34.33, "lng": 108.71 },
+    "qi":   { "name": "临淄", "lat": 36.82, "lng": 118.06 },
+    "chu":  { "name": "郢都（纪南城）", "lat": 30.35, "lng": 112.22, "note": "晚期迁寿春" },
+    "yan":  { "name": "蓟城", "lat": 39.90, "lng": 116.34 },
+    "zhao": { "name": "邯郸", "lat": 36.61, "lng": 114.49 },
+    "wei":  { "name": "大梁", "lat": 34.80, "lng": 114.31 },
+    "han":  { "name": "新郑", "lat": 34.40, "lng": 113.74 }
+  },
+  "cities": [
+    { "id": "xianyang",  "name": "咸阳",   "nation": "qin",  "type": "都城", "lat": 34.33, "lng": 108.71 },
+    { "id": "linzi",     "name": "临淄",   "nation": "qi",   "type": "都城", "lat": 36.82, "lng": 118.06, "note": "稷下学宫所在，户籍七万户" },
+    { "id": "yingdu",    "name": "郢都",   "nation": "chu",  "type": "都城", "lat": 30.35, "lng": 112.22 },
+    { "id": "jicheng",   "name": "蓟城",   "nation": "yan",  "type": "都城", "lat": 39.90, "lng": 116.34 },
+    { "id": "handan",    "name": "邯郸",   "nation": "zhao", "type": "都城", "lat": 36.61, "lng": 114.49, "note": "冶铁之都" },
+    { "id": "daliang",   "name": "大梁",   "nation": "wei",  "type": "都城", "lat": 34.80, "lng": 114.31 },
+    { "id": "xinzheng",  "name": "新郑",   "nation": "han",  "type": "都城", "lat": 34.40, "lng": 113.74, "note": "强弓劲弩皆出韩" },
+    { "id": "shouchun",  "name": "寿春",   "nation": "chu",  "type": "大城", "lat": 32.58, "lng": 116.79, "note": "楚晚期东迁之都" },
+    { "id": "wucheng",   "name": "吴邑",   "nation": "chu",  "type": "大城", "lat": 31.30, "lng": 120.62, "note": "吴越故地" },
+    { "id": "dingtao",   "name": "定陶",   "nation": "wei",  "type": "商贸", "lat": 35.07, "lng": 115.58, "note": "陶邑，天下之中，商贾辐辏" },
+    { "id": "chenggao",  "name": "成皋",   "nation": "han",  "type": "关城", "lat": 34.79, "lng": 113.43, "note": "虎牢之险，成皋之战故地" },
+    { "id": "xingyang",  "name": "荥阳",   "nation": "wei",  "type": "大城", "lat": 34.80, "lng": 113.39, "note": "鸿沟水运枢纽" },
+    { "id": "yiyang",    "name": "宜阳",   "nation": "han",  "type": "大城", "lat": 34.52, "lng": 111.94, "note": "铁山所在，兵器之都" },
+    { "id": "changping", "name": "长平",   "nation": "zhao", "type": "关城", "lat": 35.92, "lng": 113.04, "note": "上党要冲，秦赵决战地" },
+    { "id": "jingxing",  "name": "井陉关", "nation": "zhao", "type": "关隘", "lat": 38.03, "lng": 114.13, "note": "太行之险" },
+    { "id": "hangu",     "name": "函谷关", "nation": "qin",  "type": "关隘", "lat": 34.72, "lng": 110.90, "note": "一夫当关，秦之东门" },
+    { "id": "wuguan",    "name": "武关",   "nation": "qin",  "type": "关隘", "lat": 33.68, "lng": 110.55, "note": "秦楚要冲" },
+    { "id": "hanzhong",  "name": "汉中",   "nation": "qin",  "type": "大城", "lat": 33.07, "lng": 107.03, "note": "秦楚百年相争之地" },
+    { "id": "shu",       "name": "成都",   "nation": "qin",  "type": "大城", "lat": 30.66, "lng": 104.06, "note": "天府沃野，秦灭蜀后得之" },
+    { "id": "jimo",      "name": "即墨",   "nation": "qi",   "type": "大城", "lat": 36.39, "lng": 120.45 },
+    { "id": "langya",    "name": "琅琊",   "nation": "qi",   "type": "港城", "lat": 35.72, "lng": 119.19, "note": "齐东海大港" },
+    { "id": "shaoliang", "name": "少梁",   "nation": "qin",  "type": "关城", "lat": 35.38, "lng": 110.44, "note": "河西要塞，秦魏百年拉锯" },
+    { "id": "daixian",   "name": "代郡",   "nation": "zhao", "type": "边郡", "lat": 39.06, "lng": 112.96, "note": "北疆胡患前沿" }
+  ],
+  "routes": [
+    { "id": "hangu_dao",   "name": "函谷道",   "type": "干道", "from": "xianyang",  "to": "daliang",   "via": ["hangu", "chenggao"], "note": "东西轴心，六国伐秦与秦出关之正途" },
+    { "id": "wuguan_dao",  "name": "武关道",   "type": "干道", "from": "xianyang",  "to": "yingdu",    "via": ["wuguan"],            "note": "秦楚之争的南线" },
+    { "id": "jinniu_dao",  "name": "金牛道",   "type": "栈道", "from": "xianyang",  "to": "shu",       "via": ["hanzhong"],          "note": "石牛粪金，五丁开山" },
+    { "id": "taihang_dao", "name": "太行走廊", "type": "陉道", "from": "handan",    "to": "daixian",   "via": ["jingxing"],          "note": "太行八陉之井陉" },
+    { "id": "qi_dao",      "name": "齐地海途", "type": "支线", "from": "linzi",     "to": "langya",    "via": ["jimo"],              "note": "渔盐商路" },
+    { "id": "chu_jiang",   "name": "大江水道", "type": "水路", "from": "yingdu",    "to": "wucheng",   "via": [],                    "note": "楚人泛舟江海" },
+    { "id": "honggou",     "name": "鸿沟水运", "type": "水路", "from": "xingyang",  "to": "dingtao",   "via": [],                    "note": "魏惠王开鸿沟，中原水运网" }
+  ],
+  "resources": [
+    { "id": "yuncheng_salt", "name": "河东盐池", "type": "盐",   "lat": 35.02, "lng": 110.99, "note": "解池，列国争抢的天赋盐仓" },
+    { "id": "qi_salt",       "name": "齐地渔盐", "type": "盐",   "lat": 37.00, "lng": 119.20, "note": "渔盐之利，齐国富强之本" },
+    { "id": "yiyang_iron",   "name": "宜阳铁山", "type": "铁",   "lat": 34.52, "lng": 111.94, "note": "韩地铁山，天下强弓劲弩" },
+    { "id": "handan_iron",   "name": "邯郸冶铁", "type": "铁",   "lat": 36.61, "lng": 114.49 },
+    { "id": "tonglushan",    "name": "铜绿山",   "type": "铜",   "lat": 30.10, "lng": 114.97, "note": "楚地铜矿，青铜重器之源" },
+    { "id": "guanzhong",     "name": "关中膏壤", "type": "粮",   "lat": 34.40, "lng": 108.90, "note": "沃野千里，蓄积多饶——秦之根本" },
+    { "id": "shu_fertile",   "name": "蜀地沃野", "type": "粮",   "lat": 30.70, "lng": 104.00, "note": "得蜀则得楚之资粮" },
+    { "id": "jianghan",      "name": "江汉鱼米", "type": "粮",   "lat": 30.60, "lng": 112.30, "note": "楚之粮仓" },
+    { "id": "dingtao_trade", "name": "陶邑商埠", "type": "商",   "lat": 35.07, "lng": 115.58, "note": "货殖列传闻名天下" },
+    { "id": "yan_chestnut",  "name": "燕地枣栗", "type": "特产", "lat": 39.90, "lng": 116.40, "note": "枣栗之利，民不佃作而足" }
+  ]
+}
